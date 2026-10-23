@@ -68,18 +68,36 @@ class EqualizerHelper {
     }
 
     fun applyPreset(presetName: String) {
-        val gains = when (presetName.lowercase()) {
-            "bass boost" -> intArrayOf(600, 400, 0, 100, 200)
-            "rock" -> intArrayOf(400, 200, -100, 200, 500)
-            "pop" -> intArrayOf(-100, 200, 500, 200, -100)
-            "jazz" -> intArrayOf(300, 200, -100, 200, 400)
-            "electronic" -> intArrayOf(500, 300, 0, 100, 400)
-            "vocal" -> intArrayOf(-200, 0, 500, 300, 0)
-            else -> intArrayOf(0, 0, 0, 0, 0) // Flat
-        }
-
-        gains.forEachIndexed { index, level ->
+        presetGains(presetName).forEachIndexed { index, level ->
             setBandLevel(index, level)
+        }
+    }
+
+    companion object {
+        /** Preset names in display order. */
+        val PRESETS = listOf(
+            "Flat", "Bass Boost", "Vocal", "Rock", "Pop", "Jazz",
+            "Classical", "Dance", "Hip Hop", "Heavy Metal", "Folk"
+        )
+
+        /**
+         * Per-band gains in millibels (100 mB = 1 dB) for the 60/230/910/3600/14000 Hz bands;
+         * the equalizer UI shows the same values. Named genre curves are Android's own
+         * (AOSP EffectBundle.h, EQNB_5BandSoftPresets, the table the platform EQ applies).
+         * Bass Boost and Vocal aren't in AOSP: a low shelf, and a mid/presence lift with low cut.
+         */
+        fun presetGains(presetName: String): IntArray = when (presetName.lowercase()) {
+            "bass boost" -> intArrayOf(600, 400, 100, 0, 0)
+            "vocal" -> intArrayOf(-200, 0, 400, 300, 0)
+            "rock" -> intArrayOf(500, 300, -100, 300, 500)
+            "pop" -> intArrayOf(-100, 200, 500, 100, -200)
+            "jazz" -> intArrayOf(400, 200, -200, 200, 500)
+            "classical" -> intArrayOf(500, 300, -200, 400, 400)
+            "dance" -> intArrayOf(600, 0, 200, 400, 100)
+            "hip hop" -> intArrayOf(500, 300, 0, 100, 300)
+            "heavy metal" -> intArrayOf(400, 100, 900, 300, 0)
+            "folk" -> intArrayOf(300, 0, 0, 200, -100)
+            else -> intArrayOf(0, 0, 0, 0, 0) // Flat
         }
     }
 

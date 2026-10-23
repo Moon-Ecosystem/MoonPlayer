@@ -41,6 +41,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.unit.sp
 import com.example.ui.theme.LocalAccentColor
 import com.example.ui.theme.MutedText
@@ -50,6 +51,7 @@ import com.example.ui.theme.TerminalBlack
 import com.example.ui.theme.TerminalBorder
 import com.example.ui.theme.TerminalRaisedPanel
 import com.example.ui.theme.TerminalSurfaceElevated
+import com.example.service.EqualizerHelper
 import com.example.viewmodel.MainViewModel
 
 @Composable
@@ -60,17 +62,23 @@ fun EqualizerDialog(
     val settings by viewModel.settings.collectAsState()
     val accent = LocalAccentColor.current
 
-    val presets = listOf("Flat", "Bass Boost", "Rock", "Pop", "Jazz", "Electronic", "Vocal")
+    val presets = EqualizerHelper.PRESETS
     val bandLabels = listOf("60 Hz", "230 Hz", "910 Hz", "3.6 kHz", "14 kHz")
 
     var selectedPreset by remember { mutableStateOf(settings.equalizerPreset) }
     var bassStrength by remember { mutableFloatStateOf(settings.bassBoostStrength.toFloat()) }
+    // Slider values are in dB; the equalizer works in millibels (100 mB = 1 dB).
     var bandLevels by remember {
-        mutableStateOf(floatArrayOf(0f, 0f, 0f, 0f, 0f))
+        mutableStateOf(FloatArray(5) { viewModel.equalizerBandLevels().getOrElse(it) { 0 } / 100f })
     }
 
     AlertDialog(
         onDismissRequest = onDismiss,
+        // Wider than the platform default so the band sliders have room to be precise.
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp),
         title = {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -115,11 +123,13 @@ fun EqualizerDialog(
                             modifier = Modifier.clickable {
                                 selectedPreset = preset
                                 viewModel.setEqualizerPreset(preset)
+                                // Move the bars to the preset's curve
+                                bandLevels = EqualizerHelper.presetGains(preset).map { it / 100f }.toFloatArray()
                             }
                         ) {
                             Text(
                                 text = preset,
-                                color = if (isSelected) TerminalBlack else PrimaryText,
+                                color = if (isSelected) com.example.ui.theme.buttonContentColorFor(accent) else PrimaryText,
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
@@ -152,7 +162,7 @@ fun EqualizerDialog(
                                 val copy = bandLevels.clone()
                                 copy[index] = newVal
                                 bandLevels = copy
-                                viewModel.setEqualizerBandLevel(index, (newVal * 1000).toInt())
+                                viewModel.setEqualizerBandLevel(index, (newVal * 100).toInt())
                             },
                             valueRange = -10f..10f,
                             colors = SliderDefaults.colors(

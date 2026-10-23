@@ -112,7 +112,7 @@ fun PlaylistsScreen(
                     showCreateDialog = true
                 },
                 containerColor = accent,
-                contentColor = TerminalBlack,
+                contentColor = com.example.ui.theme.buttonContentColorFor(accent),
                 modifier = Modifier.testTag("create_playlist_fab")
             ) {
                 Icon(imageVector = Icons.Default.Add, contentDescription = "Create Playlist")

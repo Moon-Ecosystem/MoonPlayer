@@ -24,10 +24,14 @@ val NeonCoral = Color(0xFFE87A65)
 val VioletGlow = Color(0xFFB88EE8)
 
 /**
- * Returns crisp high-contrast content color (pitch black or pure white)
- * based on the background color's perceptual luminance.
+ * Black or white, whichever contrasts more with [backgroundColor] (WCAG contrast ratio).
+ * The crossover sits near luminance 0.18, so mid-tone accents like a saturated blue get
+ * black text; the old 0.45 cut-off gave them hard-to-read white text.
  */
 fun buttonContentColorFor(backgroundColor: Color): Color {
-    return if (backgroundColor.luminance() > 0.45f) Color(0xFF000000) else Color(0xFFFFFFFF)
+    val l = backgroundColor.luminance()
+    val contrastWithBlack = (l + 0.05f) / 0.05f
+    val contrastWithWhite = 1.05f / (l + 0.05f)
+    return if (contrastWithBlack >= contrastWithWhite) Color(0xFF000000) else Color(0xFFFFFFFF)
 }
 

@@ -676,6 +676,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         playbackService?.equalizerHelper?.setBandLevel(bandIndex, levelMilliBels)
     }
 
+    /** Current band gains in millibels as the hardware reports them (zeros when unsupported). */
+    fun equalizerBandLevels(): IntArray =
+        playbackService?.equalizerHelper?.getBandLevels() ?: IntArray(5)
+
     fun setBassBoostStrength(strength: Int) {
         playbackService?.equalizerHelper?.setBassBoost(strength)
         viewModelScope.launch {
