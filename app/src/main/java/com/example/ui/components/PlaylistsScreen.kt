@@ -312,14 +312,21 @@ fun PlaylistsScreen(
                             showCreateDialog = false
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = TerminalBlack)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = accent,
+                        contentColor = com.example.ui.theme.buttonContentColorFor(accent)
+                    )
                 ) {
-                    Text("Create")
+                    Text("Create", fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
-                OutlinedButton(onClick = { showCreateDialog = false }) {
-                    Text("Cancel", color = PrimaryText)
+                OutlinedButton(
+                    onClick = { showCreateDialog = false },
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = PrimaryText),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, TerminalBorder)
+                ) {
+                    Text("Cancel")
                 }
             },
             containerColor = TerminalSurfaceElevated
@@ -352,14 +359,21 @@ fun PlaylistsScreen(
                             playlistToRename = null
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = TerminalBlack)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = accent,
+                        contentColor = com.example.ui.theme.buttonContentColorFor(accent)
+                    )
                 ) {
-                    Text("Save")
+                    Text("Save", fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
-                OutlinedButton(onClick = { playlistToRename = null }) {
-                    Text("Cancel", color = PrimaryText)
+                OutlinedButton(
+                    onClick = { playlistToRename = null },
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = PrimaryText),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, TerminalBorder)
+                ) {
+                    Text("Cancel")
                 }
             },
             containerColor = TerminalSurfaceElevated
@@ -385,15 +399,19 @@ fun PlaylistsScreen(
                     },
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.error,
-                        contentColor = TerminalBlack
+                        contentColor = androidx.compose.ui.graphics.Color.White
                     )
                 ) {
-                    Text("Delete")
+                    Text("Delete", fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
-                OutlinedButton(onClick = { playlistToDelete = null }) {
-                    Text("Cancel", color = PrimaryText)
+                OutlinedButton(
+                    onClick = { playlistToDelete = null },
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = PrimaryText),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, TerminalBorder)
+                ) {
+                    Text("Cancel")
                 }
             },
             containerColor = TerminalSurfaceElevated
@@ -465,12 +483,15 @@ fun PlaylistDetailScreen(
                         viewModel.playTrackList(trackList, 0)
                         viewModel.navigateTo(Screen.PLAYER)
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = TerminalBlack),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = accent,
+                        contentColor = com.example.ui.theme.buttonContentColorFor(accent)
+                    ),
                     shape = RoundedCornerShape(6.dp)
                 ) {
                     Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Play")
+                    Text("Play", fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -620,25 +641,34 @@ fun AddToPlaylistDialog(
                                 showCreateInDialog = false
                             }
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = TerminalBlack)
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = accent,
+                            contentColor = com.example.ui.theme.buttonContentColorFor(accent)
+                        )
                     ) {
-                        Text("Create & Select")
+                        Text("Create & Select", fontWeight = FontWeight.Bold)
                     }
                 } else {
                     OutlinedButton(
                         onClick = { showCreateInDialog = true },
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = PrimaryText),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, TerminalBorder)
                     ) {
                         Icon(imageVector = Icons.Default.Add, contentDescription = null, tint = accent)
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("+ New Playlist", color = PrimaryText)
+                        Text("+ New Playlist")
                     }
                 }
             }
         },
         confirmButton = {
-            OutlinedButton(onClick = onDismiss) {
-                Text("Close", color = PrimaryText)
+            OutlinedButton(
+                onClick = onDismiss,
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = PrimaryText),
+                border = androidx.compose.foundation.BorderStroke(1.dp, TerminalBorder)
+            ) {
+                Text("Close")
             }
         },
         containerColor = TerminalSurfaceElevated

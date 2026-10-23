@@ -220,9 +220,12 @@ fun EqualizerDialog(
         confirmButton = {
             Button(
                 onClick = onDismiss,
-                colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = TerminalBlack)
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = accent,
+                    contentColor = com.example.ui.theme.buttonContentColorFor(accent)
+                )
             ) {
-                Text("Done")
+                Text("Done", fontWeight = FontWeight.Bold)
             }
         },
         containerColor = TerminalSurfaceElevated
@@ -284,11 +287,11 @@ fun SleepTimerDialog(
                         },
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.error,
-                            contentColor = TerminalBlack
+                            contentColor = androidx.compose.ui.graphics.Color.White
                         ),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("Cancel Timer")
+                        Text("Cancel Timer", fontWeight = FontWeight.Bold)
                     }
                 } else {
                     Text("Select sleep duration:", style = MaterialTheme.typography.bodyMedium, color = SecondaryText)
@@ -307,7 +310,7 @@ fun SleepTimerDialog(
                             ) {
                                 Text(
                                     text = "${min}m",
-                                    color = if (isSelected) TerminalBlack else PrimaryText,
+                                    color = if (isSelected) com.example.ui.theme.buttonContentColorFor(accent) else PrimaryText,
                                     style = MaterialTheme.typography.labelMedium,
                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
@@ -329,7 +332,7 @@ fun SleepTimerDialog(
                             onCheckedChange = { stopAtEndOfTrack = it },
                             colors = CheckboxDefaults.colors(
                                 checkedColor = accent,
-                                checkmarkColor = TerminalBlack,
+                                checkmarkColor = com.example.ui.theme.buttonContentColorFor(accent),
                                 uncheckedColor = TerminalBorder
                             )
                         )
@@ -349,19 +352,30 @@ fun SleepTimerDialog(
                     onClick = {
                         viewModel.startSleepTimer(selectedMinutes, stopAtEndOfTrack)
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = TerminalBlack)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = accent,
+                        contentColor = com.example.ui.theme.buttonContentColorFor(accent)
+                    )
                 ) {
-                    Text("Start Timer")
+                    Text("Start Timer", fontWeight = FontWeight.Bold)
                 }
             } else {
-                OutlinedButton(onClick = onDismiss) {
-                    Text("Close", color = PrimaryText)
+                OutlinedButton(
+                    onClick = onDismiss,
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = PrimaryText),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, TerminalBorder)
+                ) {
+                    Text("Close")
                 }
             }
         },
         dismissButton = {
-            OutlinedButton(onClick = onDismiss) {
-                Text("Dismiss", color = PrimaryText)
+            OutlinedButton(
+                onClick = onDismiss,
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = PrimaryText),
+                border = androidx.compose.foundation.BorderStroke(1.dp, TerminalBorder)
+            ) {
+                Text("Dismiss")
             }
         },
         containerColor = TerminalSurfaceElevated

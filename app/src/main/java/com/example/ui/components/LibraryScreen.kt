@@ -262,7 +262,7 @@ fun LibraryScreen(
                     },
                     colors = ButtonDefaults.buttonColors(
                         containerColor = accent,
-                        contentColor = TerminalBlack
+                        contentColor = com.example.ui.theme.buttonContentColorFor(accent)
                     ),
                     shape = RoundedCornerShape(6.dp),
                     modifier = Modifier.weight(1f)
@@ -339,10 +339,10 @@ fun LibraryScreen(
                         onClick = { viewModel.scanAudio() },
                         colors = ButtonDefaults.buttonColors(
                             containerColor = accent,
-                            contentColor = TerminalBlack
+                            contentColor = com.example.ui.theme.buttonContentColorFor(accent)
                         )
                     ) {
-                        Text("Scan Storage")
+                        Text("Scan Storage", fontWeight = FontWeight.Bold)
                     }
                 }
             }

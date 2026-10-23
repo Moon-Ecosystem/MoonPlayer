@@ -230,11 +230,14 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(10.dp))
                 Button(
                     onClick = { viewModel.scanAudio() },
-                    colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = TerminalBlack)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = accent,
+                        contentColor = com.example.ui.theme.buttonContentColorFor(accent)
+                    )
                 ) {
                     Icon(imageVector = Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Rescan Now")
+                    Text("Rescan Now", fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -360,32 +363,6 @@ fun AboutScreen(
                 )
             }
         }
-
-        Spacer(modifier = Modifier.height(20.dp))
-
-        // NOTIFICATION WIDGET PREVIEW
-        Text(
-            text = "> NOTIFICATION BAR SLEEVE WIDGET",
-            style = MaterialTheme.typography.labelSmall,
-            color = accent,
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.Bold
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            text = "Active layout sent to the Android notification drawer when playback starts:",
-            style = MaterialTheme.typography.bodySmall,
-            color = MutedText
-        )
-        Spacer(modifier = Modifier.height(10.dp))
-
-        VinylSleeveNotificationCard(
-            track = viewModel.currentTrack.collectAsState().value,
-            isPlaying = viewModel.isPlaying.collectAsState().value,
-            onTogglePlay = { viewModel.togglePlayPause() },
-            onNext = { viewModel.skipToNext() },
-            onFavorite = { viewModel.currentTrack.value?.let { viewModel.toggleFavorite(it.id) } }
-        )
 
         Spacer(modifier = Modifier.height(24.dp))
     }

@@ -84,6 +84,7 @@ import com.example.ui.theme.SecondaryText
 import com.example.ui.theme.TerminalBlack
 import com.example.ui.theme.TerminalBorder
 import com.example.ui.theme.TerminalRaisedPanel
+import com.example.ui.theme.TerminalSurfaceElevated
 import com.example.ui.theme.WarmIvory
 import com.example.viewmodel.MainViewModel
 import com.example.viewmodel.Screen
@@ -125,15 +126,6 @@ fun MainPlayerScreen(
         modifier = modifier
             .fillMaxSize()
             .background(TerminalBlack)
-            // Inward swipe detector on the right side to open Queue panel
-            .pointerInput(Unit) {
-                detectHorizontalDragGestures { change, dragAmount ->
-                    if (dragAmount < -35f) {
-                        viewModel.openQueuePanel()
-                        change.consume()
-                    }
-                }
-            }
     ) {
         val maxW = maxWidth
         val contentWidthModifier = Modifier
@@ -219,7 +211,7 @@ fun MainPlayerScreen(
                             text = { Text("View Queue (${queue.size})", color = PrimaryText) },
                             onClick = {
                                 showOverflowMenu = false
-                                viewModel.openQueuePanel()
+                                viewModel.navigateTo(Screen.QUEUE)
                             }
                         )
                         DropdownMenuItem(
@@ -256,18 +248,65 @@ fun MainPlayerScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
-            // 2. TURNTABLE / JEWEL CASE ALBUM COVER (Image 3 inspired)
-            val coverSize = (maxW * 0.74f).coerceIn(250.dp, 330.dp)
-            TurntableAlbumCover(
-                track = currentTrack,
-                isPlaying = isPlaying,
-                accentColor = accent,
-                size = coverSize,
-                modifier = Modifier.clickable { viewModel.navigateTo(Screen.QUEUE) }
-            )
-
+            // 2. STATIC SQUARE ALBUM COVER (AMOLED Styled)
+            val coverSize = (maxW * 0.76f).coerceIn(240.dp, 330.dp)
+            Box(
+                modifier = Modifier
+                    .size(coverSize)
+                    .aspectRatio(1f)
+                    .shadow(16.dp, RoundedCornerShape(16.dp))
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(TerminalRaisedPanel)
+                    .border(1.5.dp, TerminalBorder, RoundedCornerShape(16.dp))
+                    .clickable { viewModel.navigateTo(Screen.QUEUE) },
+                contentAlignment = Alignment.Center
+            ) {
+                if (!currentTrack?.albumArtUri.isNullOrEmpty()) {
+                    AsyncImage(
+                        model = currentTrack?.albumArtUri,
+                        contentDescription = "Album Art for ${currentTrack?.title}",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(24.dp)
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = TerminalSurfaceElevated,
+                            border = androidx.compose.foundation.BorderStroke(1.dp, TerminalBorder),
+                            modifier = Modifier.size(80.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.Equalizer,
+                                    contentDescription = null,
+                                    tint = accent,
+                                    modifier = Modifier.size(40.dp)
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(14.dp))
+                        Text(
+                            text = (currentTrack?.album ?: "MOON PLAYER").take(24).uppercase(),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MutedText,
+                            fontFamily = FontFamily.Monospace,
+                            letterSpacing = 1.2.sp,
+                            textAlign = TextAlign.Center,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
 
             Spacer(modifier = Modifier.height(18.dp))
 
@@ -430,9 +469,9 @@ fun MainPlayerScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
-                // Queue toggle / marker
+                // Queue toggle / marker -> Open full Queue Screen
                 IconButton(
-                    onClick = { viewModel.openQueuePanel() },
+                    onClick = { viewModel.navigateTo(Screen.QUEUE) },
                     modifier = Modifier
                         .testTag("queue_panel_button")
                         .minimumInteractiveComponentSize()
@@ -474,7 +513,7 @@ fun MainPlayerScreen(
                         Icon(
                             imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                             contentDescription = if (isPlaying) "Pause" else "Play",
-                            tint = TerminalBlack,
+                            tint = com.example.ui.theme.buttonContentColorFor(accent),
                             modifier = Modifier.size(38.dp)
                         )
                     }

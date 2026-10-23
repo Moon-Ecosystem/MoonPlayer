@@ -158,7 +158,10 @@ fun GroupedTracksScreen(
                 if (mode == GroupMode.FOLDERS) {
                     Button(
                         onClick = { folderPickerLauncher.launch(null) },
-                        colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = TerminalBlack),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = accent,
+                            contentColor = com.example.ui.theme.buttonContentColorFor(accent)
+                        ),
                         shape = RoundedCornerShape(6.dp),
                         modifier = Modifier.testTag("link_folder_button")
                     ) {
@@ -205,9 +208,12 @@ fun GroupedTracksScreen(
                             Spacer(modifier = Modifier.height(10.dp))
                             Button(
                                 onClick = { folderPickerLauncher.launch(null) },
-                                colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = TerminalBlack)
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = accent,
+                                    contentColor = com.example.ui.theme.buttonContentColorFor(accent)
+                                )
                             ) {
-                                Text("Link Device Folder")
+                                Text("Link Device Folder", fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -314,12 +320,15 @@ fun GroupedTracksScreen(
                                             viewModel.playTrackList(groupTracks, 0)
                                             viewModel.navigateTo(Screen.PLAYER)
                                         },
-                                        colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = TerminalBlack),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = accent,
+                                            contentColor = com.example.ui.theme.buttonContentColorFor(accent)
+                                        ),
                                         shape = RoundedCornerShape(6.dp)
                                     ) {
                                         Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
                                         Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Play")
+                                        Text("Play", fontWeight = FontWeight.Bold)
                                     }
                                 }
                             }
@@ -361,14 +370,21 @@ fun GroupedTracksScreen(
                         }
                         folderResultInfo = null
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = TerminalBlack)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = accent,
+                        contentColor = com.example.ui.theme.buttonContentColorFor(accent)
+                    )
                 ) {
-                    Text("Import as Playlist")
+                    Text("Import as Playlist", fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
-                OutlinedButton(onClick = { folderResultInfo = null }) {
-                    Text("Keep in Library", color = PrimaryText)
+                OutlinedButton(
+                    onClick = { folderResultInfo = null },
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = PrimaryText),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, TerminalBorder)
+                ) {
+                    Text("Keep in Library")
                 }
             },
             containerColor = TerminalSurfaceElevated

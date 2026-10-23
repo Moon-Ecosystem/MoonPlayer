@@ -356,7 +356,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openQueuePanel() {
-        _isQueuePanelOpen.value = true
+        _currentScreen.value = Screen.QUEUE
     }
 
     fun closeQueuePanel() {

@@ -35,6 +35,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.example.ui.components.AboutScreen
 import com.example.ui.components.AddToPlaylistDialog
@@ -47,7 +48,6 @@ import com.example.ui.components.NavigationDrawerContent
 import com.example.ui.components.PlaylistDetailScreen
 import com.example.ui.components.PlaylistQueueScreen
 import com.example.ui.components.PlaylistsScreen
-import com.example.ui.components.QueuePanel
 import com.example.ui.components.SettingsScreen
 import com.example.ui.components.SleepTimerDialog
 import com.example.ui.components.StatsScreen
@@ -82,7 +82,6 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun MoonPlayerApp(viewModel: MainViewModel) {
     val currentScreen by viewModel.currentScreen.collectAsState()
-    val isQueueOpen by viewModel.isQueuePanelOpen.collectAsState()
     val isEqOpen by viewModel.isEqualizerOpen.collectAsState()
     val isSleepTimerOpen by viewModel.isSleepTimerOpen.collectAsState()
     val trackToAddToPlaylist by viewModel.trackToAddToPlaylist.collectAsState()
@@ -120,11 +119,9 @@ fun MoonPlayerApp(viewModel: MainViewModel) {
     }
 
     // Hardware Back Button handling
-    BackHandler(enabled = drawerState.isOpen || isQueueOpen || currentScreen != Screen.PLAYER) {
+    BackHandler(enabled = drawerState.isOpen || currentScreen != Screen.PLAYER) {
         if (drawerState.isOpen) {
             scope.launch { drawerState.close() }
-        } else if (isQueueOpen) {
-            viewModel.closeQueuePanel()
         } else if (currentScreen != Screen.PLAYER) {
             viewModel.navigateTo(Screen.PLAYER)
         }
@@ -266,13 +263,6 @@ fun MoonPlayerApp(viewModel: MainViewModel) {
                         )
                     }
                 }
-
-                // RIGHT-EDGE SLIDING QUEUE PANEL
-                QueuePanel(
-                    viewModel = viewModel,
-                    isOpen = isQueueOpen,
-                    onClose = { viewModel.closeQueuePanel() }
-                )
             }
         }
     }
@@ -331,10 +321,10 @@ fun MoonPlayerApp(viewModel: MainViewModel) {
                     },
                     colors = ButtonDefaults.buttonColors(
                         containerColor = accent,
-                        contentColor = TerminalBlack
+                        contentColor = com.example.ui.theme.buttonContentColorFor(accent)
                     )
                 ) {
-                    Text("Grant Permission")
+                    Text("Grant Permission", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
                 }
             },
             dismissButton = {
@@ -343,9 +333,13 @@ fun MoonPlayerApp(viewModel: MainViewModel) {
                         showPermissionRationale = false
                         // Fall back to bundled demo tracks
                         viewModel.scanAudio()
-                    }
+                    },
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = PrimaryText
+                    ),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, com.example.ui.theme.TerminalBorder)
                 ) {
-                    Text("Use Demo Tracks", color = PrimaryText)
+                    Text("Use Demo Tracks")
                 }
             },
             containerColor = TerminalSurfaceElevated

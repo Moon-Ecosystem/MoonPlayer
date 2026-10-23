@@ -16,15 +16,15 @@ fun MoonPlayerTheme(
 ) {
     val darkColorScheme = darkColorScheme(
         primary = accentColor,
-        onPrimary = TerminalBlack,
+        onPrimary = buttonContentColorFor(accentColor),
         primaryContainer = TerminalRaisedPanel,
         onPrimaryContainer = accentColor,
         secondary = accentColor.copy(alpha = 0.85f),
-        onSecondary = TerminalBlack,
+        onSecondary = buttonContentColorFor(accentColor),
         secondaryContainer = TerminalSurfaceElevated,
         onSecondaryContainer = PrimaryText,
         tertiary = TerminalGreen,
-        onTertiary = TerminalBlack,
+        onTertiary = Color(0xFF000000),
         background = TerminalBlack,
         onBackground = PrimaryText,
         surface = TerminalBlack,
@@ -35,9 +35,9 @@ fun MoonPlayerTheme(
         surfaceContainerHigh = TerminalSurfaceElevated,
         surfaceContainerHighest = TerminalSurfaceHighlight,
         outline = TerminalBorder,
-        outlineVariant = TerminalBorder.copy(alpha = 0.5f),
+        outlineVariant = TerminalBorder.copy(alpha = 0.6f),
         error = Color(0xFFE05D52),
-        onError = TerminalBlack
+        onError = Color(0xFFFFFFFF)
     )
 
     CompositionLocalProvider(LocalAccentColor provides accentColor) {

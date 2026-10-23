@@ -268,7 +268,7 @@ fun PlaylistQueueScreen(
                         onClick = { viewModel.togglePlayPause() },
                         colors = ButtonDefaults.buttonColors(
                             containerColor = accent,
-                            contentColor = TerminalBlack
+                            contentColor = com.example.ui.theme.buttonContentColorFor(accent)
                         ),
                         shape = RoundedCornerShape(24.dp),
                         modifier = Modifier

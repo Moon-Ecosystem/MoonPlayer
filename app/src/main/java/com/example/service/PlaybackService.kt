@@ -135,7 +135,7 @@ class PlaybackService : MediaSessionService() {
                 if (playing) {
                     startProgressTracker()
                 }
-                updateCustomNotification()
+                updateNotification()
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -148,7 +148,7 @@ class PlaybackService : MediaSessionService() {
                         _sleepTimerSecondsRemaining.value = null
                     }
                 }
-                updateCustomNotification()
+                updateNotification()
             }
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
@@ -164,7 +164,7 @@ class PlaybackService : MediaSessionService() {
                 // Reset A-B loop on song change
                 _abLoopStartMs.value = null
                 _abLoopEndMs.value = null
-                updateCustomNotification()
+                updateNotification()
             }
 
             override fun onRepeatModeChanged(newRepeatMode: Int) {
@@ -431,7 +431,7 @@ class PlaybackService : MediaSessionService() {
         return super.onStartCommand(intent, flags, startId)
     }
 
-    private fun updateCustomNotification() {
+    private fun updateNotification() {
         val track = _currentTrack.value ?: return
         val nm = getSystemService(NotificationManager::class.java) ?: return
 
@@ -441,7 +441,7 @@ class PlaybackService : MediaSessionService() {
                 "Moon Player Playback",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Notification bar music controls"
+                description = "Playback controls"
                 setShowBadge(false)
             }
             nm.createNotificationChannel(channel)
@@ -453,8 +453,14 @@ class PlaybackService : MediaSessionService() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        val nextIntent = PendingIntent.getService(
+        val prevIntent = PendingIntent.getService(
             this, 2,
+            Intent(this, PlaybackService::class.java).apply { action = ACTION_SKIP_PREV },
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val nextIntent = PendingIntent.getService(
+            this, 3,
             Intent(this, PlaybackService::class.java).apply { action = ACTION_SKIP_NEXT },
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
@@ -465,21 +471,18 @@ class PlaybackService : MediaSessionService() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        val rv = RemoteViews(packageName, R.layout.notification_media_custom)
-        rv.setTextViewText(R.id.notif_title, track.title.uppercase())
-        rv.setTextViewText(R.id.notif_subtitle, "${track.artist} · ${track.album}".uppercase())
-        rv.setImageViewResource(
-            R.id.notif_btn_play,
-            if (player.isPlaying) R.drawable.ic_notif_pause else R.drawable.ic_notif_play
-        )
-        rv.setOnClickPendingIntent(R.id.notif_btn_play, playIntent)
-        rv.setOnClickPendingIntent(R.id.notif_btn_next, nextIntent)
-
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.moon_player_logo)
-            .setCustomContentView(rv)
-            .setCustomBigContentView(rv)
+            .setContentTitle(track.title)
+            .setContentText("${track.artist} · ${track.album}")
             .setContentIntent(contentIntent)
+            .addAction(android.R.drawable.ic_media_previous, "Previous", prevIntent)
+            .addAction(
+                if (player.isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play,
+                if (player.isPlaying) "Pause" else "Play",
+                playIntent
+            )
+            .addAction(android.R.drawable.ic_media_next, "Next", nextIntent)
             .setOngoing(player.isPlaying)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setSilent(true)
