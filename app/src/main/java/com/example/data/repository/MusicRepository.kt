@@ -91,6 +91,43 @@ internal fun supportedAudioMime(name: String, mimeType: String): String? =
     AUDIO_MIME_ALIASES[mimeType.lowercase()]
         ?: AUDIO_EXTENSIONS[name.substringAfterLast('.', "").lowercase()]
 
+/**
+ * Picks the cover's most prominent colour from Palette swatches given as (rgb, population).
+ *
+ * Palette's dominantSwatch is just the largest single cluster, so a flat one-shade backdrop
+ * beats a subject spread over many shades (e.g. a blue sky vs. reds and pinks). Instead, sum
+ * colourful swatches into 60° hue families weighted by saturation, take the strongest family,
+ * and return its strongest swatch. Null when the cover has no colourful swatches (greys).
+ */
+internal fun accentFromSwatches(swatches: List<Pair<Int, Int>>): Int? {
+    data class Scored(val rgb: Int, val family: Int, val weight: Float)
+
+    val colourful = swatches.mapNotNull { (rgb, population) ->
+        val r = (rgb shr 16 and 0xFF) / 255f
+        val g = (rgb shr 8 and 0xFF) / 255f
+        val b = (rgb and 0xFF) / 255f
+        val max = maxOf(r, g, b)
+        val min = minOf(r, g, b)
+        val lightness = (max + min) / 2
+        val chroma = max - min
+        val saturation = if (chroma == 0f) 0f else chroma / (1 - kotlin.math.abs(2 * lightness - 1))
+        // Skip greys and near-black/near-white swatches: they shouldn't drive the accent.
+        if (saturation < 0.25f || lightness < 0.12f || lightness > 0.9f) return@mapNotNull null
+        val hue = when (max) {
+            r -> 60 * (((g - b) / chroma) % 6)
+            g -> 60 * ((b - r) / chroma + 2)
+            else -> 60 * ((r - g) / chroma + 4)
+        }.let { if (it < 0) it + 360 else it }
+        // Families centred on red (0°), yellow, green, cyan, blue, magenta; red wraps around 360°.
+        val family = (((hue + 30) / 60).toInt()) % 6
+        Scored(rgb, family, population * saturation)
+    }
+    val bestFamily = colourful.groupBy { it.family }
+        .maxByOrNull { (_, members) -> members.sumOf { it.weight.toDouble() } }
+        ?.value ?: return null
+    return bestFamily.maxBy { it.weight }.rgb
+}
+
 /** Short codec label for the player UI, e.g. "audio/flac" -> "FLAC". */
 fun audioFormatLabel(mimeType: String): String = when (mimeType) {
     "audio/mpeg" -> "MP3"
@@ -454,16 +491,17 @@ class MusicRepository(private val context: Context) {
 
         val extractedColor: Color = if (bitmap != null) {
             val palette = Palette.from(bitmap!!).generate()
-            val swatch = palette.dominantSwatch
-                ?: palette.vibrantSwatch
-                ?: palette.lightVibrantSwatch
-                ?: palette.mutedSwatch
-                ?: palette.lightMutedSwatch
+            val rgb = accentFromSwatches(palette.swatches.map { it.rgb to it.population })
+                ?: (palette.dominantSwatch
+                    ?: palette.vibrantSwatch
+                    ?: palette.lightVibrantSwatch
+                    ?: palette.mutedSwatch
+                    ?: palette.lightMutedSwatch)?.rgb
 
-            if (swatch != null) {
+            if (rgb != null) {
                 // Ensure contrast against dark terminal #121212 background (luminance > 0.35)
                 val hsl = FloatArray(3)
-                ColorUtils.colorToHSL(swatch.rgb, hsl)
+                ColorUtils.colorToHSL(rgb, hsl)
                 if (hsl[2] < 0.45f) {
                     hsl[2] = 0.55f // brighten up dark colors for readability
                 }

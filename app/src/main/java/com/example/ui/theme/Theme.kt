@@ -1,5 +1,7 @@
 package com.example.ui.theme
 
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
@@ -43,8 +45,17 @@ fun MoonPlayerTheme(
     CompositionLocalProvider(LocalAccentColor provides accentColor) {
         MaterialTheme(
             colorScheme = darkColorScheme,
-            typography = Typography,
-            content = content
-        )
+            typography = Typography
+        ) {
+            // Components like Button merge their label style onto LocalTextStyle, so a colour in
+            // the ambient style (bodyLarge is PrimaryText) beat the button's content colour and
+            // left white text on light accents. Keep the ambient style colourless and carry the
+            // default text colour in LocalContentColor, which buttons and surfaces override.
+            CompositionLocalProvider(
+                LocalTextStyle provides Typography.bodyLarge.copy(color = Color.Unspecified),
+                LocalContentColor provides PrimaryText,
+                content = content
+            )
+        }
     }
 }

@@ -23,7 +23,7 @@ import androidx.compose.ui.unit.dp
 fun Modifier.overscrollNavigation(
     onPullUp: (() -> Unit)? = null,
     onPullDown: (() -> Unit)? = null,
-    threshold: Dp = 80.dp
+    threshold: Dp = 56.dp
 ): Modifier {
     val thresholdPx = with(LocalDensity.current) { threshold.toPx() }
     // Read the latest callbacks without recreating the connection (and losing the pull) mid-drag.

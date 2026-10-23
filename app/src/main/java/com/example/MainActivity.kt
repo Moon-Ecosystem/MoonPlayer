@@ -127,11 +127,11 @@ fun MoonPlayerApp(viewModel: MainViewModel) {
                         when {
                             // The queue sits "below" the player: it slides up over it and back down.
                             initialState == Screen.PLAYER && targetState == Screen.QUEUE ->
-                                (slideInVertically(tween(320)) { it } + fadeIn(tween(320))) togetherWith
-                                    (slideOutVertically(tween(320)) { -it / 4 } + fadeOut(tween(320)))
+                                (slideInVertically(tween(200)) { it } + fadeIn(tween(200))) togetherWith
+                                    (slideOutVertically(tween(200)) { -it / 4 } + fadeOut(tween(200)))
                             initialState == Screen.QUEUE && targetState == Screen.PLAYER ->
-                                (slideInVertically(tween(320)) { -it / 4 } + fadeIn(tween(320))) togetherWith
-                                    (slideOutVertically(tween(320)) { it } + fadeOut(tween(320)))
+                                (slideInVertically(tween(200)) { -it / 4 } + fadeIn(tween(200))) togetherWith
+                                    (slideOutVertically(tween(200)) { it } + fadeOut(tween(200)))
                             else -> fadeIn(tween(200)) togetherWith fadeOut(tween(150))
                         }
                     },
