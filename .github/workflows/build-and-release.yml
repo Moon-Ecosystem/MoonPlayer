@@ -63,7 +63,7 @@ jobs:
         with:
           cache-read-only: false
 
-      - name: Prepare build environment & Keystore
+      - name: Prepare build environment
         run: |
           # Ensure gradlew has execute permissions
           chmod +x gradlew
@@ -75,26 +75,24 @@ jobs:
             touch .env
           fi
 
-          # Restore debug keystore if base64 file exists, or generate one
-          if [ -f "debug.keystore.base64" ]; then
-            echo "Decoding debug.keystore from debug.keystore.base64..."
-            base64 -d debug.keystore.base64 > debug.keystore
-          elif [ ! -f "debug.keystore" ]; then
-            echo "Generating new debug.keystore..."
-            keytool -genkey -v \
-              -keystore debug.keystore \
-              -storepass android \
-              -alias androiddebugkey \
-              -keypass android \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 10000 \
-              -dname "CN=Android Debug,O=Android,C=US"
+      # Release signing reads KEYSTORE_PATH / STORE_PASSWORD / KEY_PASSWORD (key alias "upload").
+      # A fixed key keeps every release installable over the previous one.
+      - name: Decode signing keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::Missing KEYSTORE_BASE64 secret (base64 of the upload keystore)"; exit 1
           fi
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/upload.jks"
 
       - name: Build Android APK
         run: |
-          ./gradlew assembleDebug --stacktrace
+          ./gradlew assembleRelease --stacktrace
+        env:
+          KEYSTORE_PATH: ${{ runner.temp }}/upload.jks
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
 
       - name: Prepare release artifacts & checksums
         id: prepare_artifacts
@@ -115,7 +113,7 @@ jobs:
 
           echo "artifact_version=${TAG_NAME}" >> "$GITHUB_OUTPUT"
 
-          APK_SRC="app/build/outputs/apk/debug/app-debug.apk"
+          APK_SRC="app/build/outputs/apk/release/app-release.apk"
           APK_DEST="release-output/MoonPlayer-${TAG_NAME}.apk"
 
           if [ -f "$APK_SRC" ]; then

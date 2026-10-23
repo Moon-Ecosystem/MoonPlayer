@@ -24,7 +24,8 @@ class ExampleUnitTest {
             durationMs = 180000L
         )
         assertEquals("03:00", track.formattedDuration)
-        assertEquals(320, track.bitrateKbps)
-        assertEquals("audio/mpeg", track.mimeType)
+        // Unknown audio details default to "not known" rather than invented MP3 values
+        assertEquals(0, track.bitrateKbps)
+        assertEquals("", track.mimeType)
     }
 }

@@ -38,6 +38,24 @@ interface PlaylistDao {
 }
 
 @Dao
+interface LibraryDao {
+    @Query("SELECT * FROM library_tracks")
+    suspend fun getAll(): List<LibraryTrackEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(tracks: List<LibraryTrackEntity>)
+
+    @Query("DELETE FROM library_tracks")
+    suspend fun clear()
+
+    @Transaction
+    suspend fun replaceAll(tracks: List<LibraryTrackEntity>) {
+        clear()
+        insertAll(tracks)
+    }
+}
+
+@Dao
 interface FavoriteDao {
     @Query("SELECT trackId FROM favorites")
     fun getAllFavoriteIds(): Flow<List<String>>

@@ -1,8 +1,5 @@
 package com.example.ui.components
 
-import android.content.Intent
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -18,6 +15,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.activity.compose.BackHandler
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -51,7 +51,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -79,6 +78,7 @@ fun PlaylistsScreen(
     modifier: Modifier = Modifier
 ) {
     val playlists by viewModel.allPlaylists.collectAsState()
+    val folderPlaylists by viewModel.folderPlaylists.collectAsState()
     val accent = LocalAccentColor.current
 
     var showCreateDialog by remember { mutableStateOf(false) }
@@ -86,17 +86,22 @@ fun PlaylistsScreen(
     var playlistToDelete by remember { mutableStateOf<PlaylistEntity?>(null) }
     var newPlaylistName by remember { mutableStateOf("") }
     var renamePlaylistName by remember { mutableStateOf("") }
+    var openFolderIndex by remember { mutableStateOf<Int?>(null) }
 
-    val context = LocalContext.current
-    val folderImportLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocumentTree()
-    ) { uri ->
-        if (uri != null) {
-            try {
-                context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            } catch (_: Exception) {}
-            viewModel.linkFolderAndScan(uri, autoImportAsPlaylist = true)
-        }
+    val pickFolder = rememberFolderPicker { uri, flags ->
+        viewModel.addFolder(uri, flags)
+    }
+
+    // A folder playlist opens as a track list, the same way the Folders screen does.
+    folderPlaylists.getOrNull(openFolderIndex ?: -1)?.let { (name, tracks) ->
+        BackHandler { openFolderIndex = null }
+        LibraryScreen(
+            viewModel = viewModel,
+            title = name.uppercase(),
+            tracksOverride = tracks,
+            onBack = { openFolderIndex = null }
+        )
+        return
     }
 
     Scaffold(
@@ -149,7 +154,7 @@ fun PlaylistsScreen(
                             color = PrimaryText
                         )
                         Text(
-                            text = "[ ${playlists.size} CUSTOM LISTS ]",
+                            text = "[ ${folderPlaylists.size} FOLDERS · ${playlists.size} CUSTOM ]",
                             style = MaterialTheme.typography.labelSmall,
                             color = MutedText,
                             fontFamily = FontFamily.Monospace
@@ -158,7 +163,7 @@ fun PlaylistsScreen(
                 }
 
                 Button(
-                    onClick = { folderImportLauncher.launch(null) },
+                    onClick = pickFolder,
                     colors = ButtonDefaults.buttonColors(containerColor = TerminalRaisedPanel, contentColor = PrimaryText),
                     border = androidx.compose.foundation.BorderStroke(1.dp, TerminalBorder),
                     shape = RoundedCornerShape(6.dp),
@@ -166,13 +171,13 @@ fun PlaylistsScreen(
                 ) {
                     Icon(imageVector = Icons.Default.DriveFolderUpload, contentDescription = null, tint = accent, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Import Folder", fontSize = 12.sp)
+                    Text("Add Folder", fontSize = 12.sp)
                 }
             }
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            if (playlists.isEmpty()) {
+            if (playlists.isEmpty() && folderPlaylists.isEmpty()) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -194,7 +199,7 @@ fun PlaylistsScreen(
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "Tap the + button to create a custom playlist",
+                            text = "Add a music folder, or tap + to create a custom playlist",
                             style = MaterialTheme.typography.bodySmall,
                             color = MutedText
                         )
@@ -207,6 +212,61 @@ fun PlaylistsScreen(
                         .weight(1f),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
+                    if (folderPlaylists.isNotEmpty()) {
+                        item { PlaylistSectionLabel("FOLDERS") }
+                    }
+                    itemsIndexed(folderPlaylists) { index, (name, tracks) ->
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = TerminalRaisedPanel,
+                            border = androidx.compose.foundation.BorderStroke(1.dp, TerminalBorder),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { openFolderIndex = index }
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Folder,
+                                    contentDescription = null,
+                                    tint = accent,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = name,
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = PrimaryText
+                                    )
+                                    Text(
+                                        text = "${tracks.size} tracks · updates with the folder",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MutedText
+                                    )
+                                }
+                                IconButton(
+                                    onClick = { viewModel.playTrackList(tracks, 0, source = name) },
+                                    enabled = tracks.isNotEmpty(),
+                                    modifier = Modifier.minimumInteractiveComponentSize()
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.PlayArrow,
+                                        contentDescription = "Play $name",
+                                        tint = accent
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    if (playlists.isNotEmpty()) {
+                        item { PlaylistSectionLabel("MY PLAYLISTS") }
+                    }
                     items(playlists, key = { it.id }) { playlist ->
                         Surface(
                             shape = RoundedCornerShape(8.dp),
@@ -420,6 +480,18 @@ fun PlaylistsScreen(
 }
 
 @Composable
+private fun PlaylistSectionLabel(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelSmall,
+        color = MutedText,
+        fontFamily = FontFamily.Monospace,
+        letterSpacing = 2.sp,
+        modifier = Modifier.padding(top = 4.dp)
+    )
+}
+
+@Composable
 fun PlaylistDetailScreen(
     viewModel: MainViewModel,
     playlist: PlaylistEntity,
@@ -480,7 +552,7 @@ fun PlaylistDetailScreen(
             if (trackList.isNotEmpty()) {
                 Button(
                     onClick = {
-                        viewModel.playTrackList(trackList, 0)
+                        viewModel.playTrackList(trackList, 0, source = playlist.name)
                         viewModel.navigateTo(Screen.PLAYER)
                     },
                     colors = ButtonDefaults.buttonColors(
@@ -527,7 +599,7 @@ fun PlaylistDetailScreen(
                             .fillMaxWidth()
                             .clickable {
                                 val idx = playlistTracks.indexOf(pt)
-                                viewModel.playTrackList(trackList, idx.coerceAtLeast(0))
+                                viewModel.playTrackList(trackList, idx.coerceAtLeast(0), source = playlist.name)
                                 viewModel.navigateTo(Screen.PLAYER)
                             }
                     ) {

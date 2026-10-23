@@ -1,20 +1,20 @@
 package com.example.data.repository
 
-import android.content.ContentUris
 import android.content.Context
+import android.database.Cursor
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
 import android.provider.DocumentsContract
-import android.provider.MediaStore
+import android.util.Log
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
 import androidx.core.graphics.ColorUtils
 import androidx.palette.graphics.Palette
 import com.example.data.db.FavoriteEntity
 import com.example.data.db.HistoryEntity
+import com.example.data.db.LibraryTrackEntity
 import com.example.data.db.MoonPlayerDatabase
 import com.example.data.db.PlaylistEntity
 import com.example.data.db.PlaylistTrackEntity
@@ -27,10 +27,82 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.withContext
-import java.io.File
-import java.io.FileOutputStream
+
+data class FolderScanResult(
+    val folderName: String,
+    val tracks: List<Track>,
+    val error: String? = null
+)
+
+/**
+ * Display name for a SAF tree URI without any I/O, e.g. ".../tree/primary%3AMusic%2FRock" -> "Rock".
+ * The storage root itself ("primary:") has no folder segment, so it gets a generic name.
+ */
+fun folderNameFromTreeUri(treeUri: String): String {
+    val docId = java.net.URLDecoder.decode(treeUri.substringAfter("/tree/").substringBefore('/'), "UTF-8")
+    return docId.substringAfterLast(':').substringAfterLast('/').ifBlank { "Internal storage" }
+}
+
+/**
+ * Whether the track at [trackUri] lives inside the folder [treeUri], even when it was scanned
+ * through a different (enclosing) folder. Path-style document IDs ("primary:Music/J-pop/a.mp3")
+ * are compared as paths; providers with opaque IDs fall back to "scanned through this folder".
+ */
+fun isTrackInFolder(trackUri: String, treeUri: String): Boolean {
+    if (trackUri.startsWith("$treeUri/document/")) return true
+    val authority = { uri: String -> uri.substringAfter("://").substringBefore('/') }
+    if (authority(trackUri) != authority(treeUri)) return false
+    val decode = { s: String -> java.net.URLDecoder.decode(s, "UTF-8") }
+    val folderId = decode(treeUri.substringAfter("/tree/").substringBefore('/'))
+    val trackId = decode(trackUri.substringAfterLast("/document/"))
+    // A storage root ("primary:") already ends in its separator.
+    val prefix = if (folderId.endsWith(':')) folderId else "$folderId/"
+    return trackId.startsWith(prefix)
+}
+
+// Formats ExoPlayer plays without extra decoders, keyed by the canonical MIME type we store.
+private val AUDIO_EXTENSIONS = mapOf(
+    "mp3" to "audio/mpeg",
+    "flac" to "audio/flac",
+    "m4a" to "audio/mp4",
+    "aac" to "audio/aac",
+    "ogg" to "audio/ogg",
+    "oga" to "audio/ogg",
+    "opus" to "audio/opus",
+    "wav" to "audio/wav"
+)
+
+// Provider-reported aliases mapped onto the same canonical types.
+private val AUDIO_MIME_ALIASES = mapOf(
+    "audio/mpeg" to "audio/mpeg", "audio/mp3" to "audio/mpeg", "audio/x-mpeg" to "audio/mpeg",
+    "audio/flac" to "audio/flac", "audio/x-flac" to "audio/flac",
+    "audio/mp4" to "audio/mp4", "audio/x-m4a" to "audio/mp4", "audio/m4a" to "audio/mp4",
+    "audio/aac" to "audio/aac", "audio/aac-adts" to "audio/aac",
+    "audio/ogg" to "audio/ogg", "application/ogg" to "audio/ogg", "audio/vorbis" to "audio/ogg",
+    "audio/opus" to "audio/opus",
+    "audio/wav" to "audio/wav", "audio/x-wav" to "audio/wav", "audio/wave" to "audio/wav"
+)
+
+/**
+ * Canonical MIME type if [name]/[mimeType] is a supported audio file, else null.
+ * The provider's MIME wins; the extension covers providers that report octet-stream.
+ */
+internal fun supportedAudioMime(name: String, mimeType: String): String? =
+    AUDIO_MIME_ALIASES[mimeType.lowercase()]
+        ?: AUDIO_EXTENSIONS[name.substringAfterLast('.', "").lowercase()]
+
+/** Short codec label for the player UI, e.g. "audio/flac" -> "FLAC". */
+fun audioFormatLabel(mimeType: String): String = when (mimeType) {
+    "audio/mpeg" -> "MP3"
+    "audio/mp4" -> "M4A"
+    else -> mimeType.substringAfter('/').uppercase()
+}
 
 class MusicRepository(private val context: Context) {
+
+    private companion object {
+        const val TAG = "MusicRepository"
+    }
 
     private val db = MoonPlayerDatabase.getInstance(context)
     private val playlistDao = db.playlistDao()
@@ -38,6 +110,7 @@ class MusicRepository(private val context: Context) {
     private val historyDao = db.historyDao()
     private val queueDao = db.queueDao()
     private val trackStatDao = db.trackStatDao()
+    private val libraryDao = db.libraryDao()
 
     private val _allTracks = MutableStateFlow<List<Track>>(emptyList())
     val allTracks = _allTracks.asStateFlow()
@@ -57,163 +130,6 @@ class MusicRepository(private val context: Context) {
     val favoriteTracks: Flow<List<Track>> = combine(_allTracks, favoriteTrackIds) { tracks, favIds ->
         val favSet = favIds.toSet()
         tracks.filter { favSet.contains(it.id) }.map { it.copy(isFavorite = true) }
-    }
-
-    suspend fun scanMediaStore(): List<Track> = withContext(Dispatchers.IO) {
-        val tracks = mutableListOf<Track>()
-
-        val projection = arrayOf(
-            MediaStore.Audio.Media._ID,
-            MediaStore.Audio.Media.TITLE,
-            MediaStore.Audio.Media.ARTIST,
-            MediaStore.Audio.Media.ALBUM,
-            MediaStore.Audio.Media.DURATION,
-            MediaStore.Audio.Media.TRACK,
-            MediaStore.Audio.Media.YEAR,
-            MediaStore.Audio.Media.MIME_TYPE,
-            MediaStore.Audio.Media.ALBUM_ID,
-            MediaStore.Audio.Media.DATA,
-            MediaStore.Audio.Media.DATE_ADDED
-        )
-
-        // Strict MP3 filtering as requested by specification
-        val selection = "(${MediaStore.Audio.Media.MIME_TYPE} = ? OR ${MediaStore.Audio.Media.DATA} LIKE '%.mp3')"
-        val selectionArgs = arrayOf("audio/mpeg")
-        val sortOrder = "${MediaStore.Audio.Media.TITLE} COLLATE NOCASE ASC"
-
-        try {
-            context.contentResolver.query(
-                MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
-                projection,
-                selection,
-                selectionArgs,
-                sortOrder
-            )?.use { cursor ->
-                val idCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
-                val titleCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
-                val artistCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
-                val albumCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM)
-                val durCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
-                val trackNumCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TRACK)
-                val yearCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.YEAR)
-                val albumIdCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM_ID)
-                val dataCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATA)
-                val dateAddedCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_ADDED)
-
-                while (cursor.moveToNext()) {
-                    val id = cursor.getLong(idCol)
-                    val title = cursor.getString(titleCol) ?: "Unknown Track"
-                    val artist = cursor.getString(artistCol).takeIf { it != "<unknown>" } ?: "Unknown Artist"
-                    val album = cursor.getString(albumCol).takeIf { it != "<unknown>" } ?: "Unknown Album"
-                    val duration = cursor.getLong(durCol)
-                    val trackNum = cursor.getInt(trackNumCol)
-                    val year = cursor.getInt(yearCol)
-                    val albumId = cursor.getLong(albumIdCol)
-                    val dataPath = cursor.getString(dataCol) ?: ""
-                    val dateAdded = cursor.getLong(dateAddedCol)
-
-                    val contentUri = ContentUris.withAppendedId(
-                        MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
-                        id
-                    ).toString()
-
-                    val albumArtUri = ContentUris.withAppendedId(
-                        Uri.parse("content://media/external/audio/albumart"),
-                        albumId
-                    ).toString()
-
-                    val folder = if (dataPath.isNotEmpty()) {
-                        File(dataPath).parentFile?.name ?: "Music"
-                    } else "Music"
-
-                    tracks.add(
-                        Track(
-                            id = id.toString(),
-                            contentUri = contentUri,
-                            title = title,
-                            artist = artist,
-                            album = album,
-                            durationMs = duration,
-                            trackNumber = trackNum,
-                            year = year,
-                            mimeType = "audio/mpeg",
-                            albumArtUri = albumArtUri,
-                            folderPath = folder,
-                            dateAdded = dateAdded
-                        )
-                    )
-                }
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-
-        // Always check bundled demo tracks if media store returned empty or to supplement
-        if (tracks.isEmpty()) {
-            val demoTracks = loadBundledDemoTracks()
-            tracks.addAll(demoTracks)
-        }
-
-        _allTracks.value = tracks
-        tracks
-    }
-
-    suspend fun loadBundledDemoTracks(): List<Track> = withContext(Dispatchers.IO) {
-        val demoList = mutableListOf<Track>()
-        val musicDir = File(context.filesDir, "sample_music").apply { mkdirs() }
-
-        try {
-            val sampleFiles = context.assets.list("sample_tracks") ?: emptyArray()
-            val metaData = mapOf(
-                "neon_nightfall.mp3" to Triple("Neon Nightfall", "Moon Cat", "Terminal Sessions"),
-                "cyber_dreamer.mp3" to Triple("Cyber Dreamer", "Aether Code", "Terminal Sessions"),
-                "coffee_and_monospace.mp3" to Triple("Coffee & Monospace", "Lo-Fi Bit", "Terminal Sessions"),
-                "midnight_protocol.mp3" to Triple("Midnight Protocol", "Starlight Unit", "Zero Gravity")
-            )
-
-            for ((index, fileName) in sampleFiles.withIndex()) {
-                val destFile = File(musicDir, fileName)
-                if (!destFile.exists() || destFile.length() == 0L) {
-                    context.assets.open("sample_tracks/$fileName").use { input ->
-                        FileOutputStream(destFile).use { output ->
-                            input.copyTo(output)
-                        }
-                    }
-                }
-
-                val mmr = MediaMetadataRetriever()
-                var durationMs = 30000L
-                try {
-                    mmr.setDataSource(destFile.absolutePath)
-                    val durStr = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
-                    durStr?.toLongOrNull()?.let { durationMs = it }
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                } finally {
-                    try { mmr.release() } catch (_: Exception) {}
-                }
-
-                val info = metaData[fileName] ?: Triple(fileName.removeSuffix(".mp3"), "Moon Artist", "Terminal Beats")
-                val track = Track(
-                    id = "demo_$index",
-                    contentUri = Uri.fromFile(destFile).toString(),
-                    title = info.first,
-                    artist = info.second,
-                    album = info.third,
-                    durationMs = durationMs,
-                    trackNumber = index + 1,
-                    year = 2026,
-                    mimeType = "audio/mpeg",
-                    albumArtUri = null, // uses default mascot cover
-                    folderPath = "Internal / Moon Samples",
-                    dateAdded = System.currentTimeMillis()
-                )
-                demoList.add(track)
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-        demoList
     }
 
     suspend fun toggleFavorite(trackId: String) {
@@ -251,127 +167,207 @@ class MusicRepository(private val context: Context) {
         }
     }
 
-    suspend fun scanFolderUri(treeUri: Uri): Pair<String, List<Track>> = withContext(Dispatchers.IO) {
+    /**
+     * Recursively scans only the persisted SAF tree rooted at [treeUri].
+     * The traversal never leaves that tree and never falls back to MediaStore.
+     * Files whose last-modified time matches a [known] track reuse its metadata instead of
+     * being re-read, which is what makes rescans cheap.
+     */
+    suspend fun scanFolderUri(
+        treeUri: Uri,
+        known: Map<String, Track> = emptyMap()
+    ): FolderScanResult = withContext(Dispatchers.IO) {
         val tracks = mutableListOf<Track>()
-        var folderName = "Linked Folder"
+        var folderName = "Music"
 
         try {
-            val docId = DocumentsContract.getTreeDocumentId(treeUri)
-            val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, docId)
+            val rootDocId = DocumentsContract.getTreeDocumentId(treeUri)
+            folderName = queryDisplayName(treeUri, rootDocId) ?: folderName
 
-            val docUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, docId)
-            context.contentResolver.query(
-                docUri,
-                arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME),
-                null, null, null
-            )?.use { c ->
-                if (c.moveToFirst()) {
-                    val nameIdx = c.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
-                    if (nameIdx >= 0) {
-                        folderName = c.getString(nameIdx) ?: "Linked Folder"
+            val pendingDirectories = ArrayDeque<String>().apply { add(rootDocId) }
+            val visitedDirectories = mutableSetOf(rootDocId)
+
+            while (pendingDirectories.isNotEmpty()) {
+                val parentDocId = pendingDirectories.removeFirst()
+                queryChildren(treeUri, parentDocId)?.use { cursor ->
+                    val idIdx = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+                    val nameIdx = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+                    val mimeIdx = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE)
+                    val modIdx = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
+                    if (idIdx < 0 || nameIdx < 0 || mimeIdx < 0) return@use
+
+                    while (cursor.moveToNext()) {
+                        val childDocId = cursor.getString(idIdx) ?: continue
+                        val name = cursor.getString(nameIdx) ?: ""
+                        val mime = cursor.getString(mimeIdx) ?: ""
+
+                        if (mime == DocumentsContract.Document.MIME_TYPE_DIR) {
+                            // visited guard keeps traversal inside the tree even with odd providers
+                            if (visitedDirectories.add(childDocId)) {
+                                pendingDirectories.add(childDocId)
+                            }
+                        } else {
+                            val audioMime = supportedAudioMime(name, mime)
+                            if (audioMime != null) {
+                                val lastModified = if (modIdx >= 0) cursor.getLong(modIdx) else 0L
+                                val cached = known[folderTrackId(childDocId)]
+                                    ?.takeIf { lastModified != 0L && it.dateAdded == lastModified }
+                                tracks.add(
+                                    cached ?: readFolderTrack(
+                                        treeUri, childDocId, name, audioMime, lastModified, folderName
+                                    )
+                                )
+                            }
+                        }
                     }
                 }
             }
 
-            val projection = arrayOf(
+            FolderScanResult(folderName = folderName, tracks = tracks)
+        } catch (e: SecurityException) {
+            Log.w(TAG, "Selected folder permission is missing or revoked (${e.javaClass.simpleName})")
+            FolderScanResult(
+                folderName = folderName,
+                tracks = emptyList(),
+                error = "Access to the selected folder was denied or revoked. Choose the folder again."
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Selected folder could not be read (${e.javaClass.simpleName})")
+            FolderScanResult(
+                folderName = folderName,
+                tracks = emptyList(),
+                error = "The selected folder could not be read. It may have been moved, deleted, or become unavailable."
+            )
+        }
+    }
+
+    private fun queryDisplayName(treeUri: Uri, docId: String): String? {
+        val docUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, docId)
+        context.contentResolver.query(
+            docUri,
+            arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME),
+            null, null, null
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val nameIdx = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+                if (nameIdx >= 0) return cursor.getString(nameIdx)
+            }
+        }
+        return null
+    }
+
+    private fun queryChildren(treeUri: Uri, parentDocId: String): Cursor? {
+        val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, parentDocId)
+        return context.contentResolver.query(
+            childrenUri,
+            arrayOf(
                 DocumentsContract.Document.COLUMN_DOCUMENT_ID,
                 DocumentsContract.Document.COLUMN_DISPLAY_NAME,
                 DocumentsContract.Document.COLUMN_MIME_TYPE,
-                DocumentsContract.Document.COLUMN_SIZE,
                 DocumentsContract.Document.COLUMN_LAST_MODIFIED
-            )
+            ),
+            null, null, null
+        )
+    }
 
-            context.contentResolver.query(
-                childrenUri,
-                projection,
-                null, null, null
-            )?.use { cursor ->
-                val idIdx = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
-                val nameIdx = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
-                val mimeIdx = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE)
-                val modIdx = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
+    private fun readFolderTrack(
+        treeUri: Uri,
+        docId: String,
+        fileName: String,
+        mimeType: String,
+        lastModified: Long,
+        folderName: String
+    ): Track {
+        val trackUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, docId)
 
-                while (cursor.moveToNext()) {
-                    val mime = cursor.getString(mimeIdx) ?: ""
-                    val name = cursor.getString(nameIdx) ?: ""
-                    val childDocId = cursor.getString(idIdx)
-                    val lastMod = cursor.getLong(modIdx)
+        var title = fileName.substringBeforeLast('.').replace('_', ' ')
+        var artist = "Unknown Artist"
+        var album = folderName
+        var durationMs = 0L
+        // 0 = unknown; the player hides values it doesn't have rather than guessing
+        var bitrateKbps = 0
+        var sampleRateHz = 0
 
-                    // EXCLUSIVELY MP3 FILES - ignores directories and non-mp3 files
-                    val isMp3 = name.endsWith(".mp3", ignoreCase = true) || mime == "audio/mpeg" || mime == "audio/mp3"
-                    val isDirectory = mime == DocumentsContract.Document.MIME_TYPE_DIR
-
-                    if (isMp3 && !isDirectory) {
-                        val trackUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, childDocId)
-
-                        var title = name.removeSuffix(".mp3").replace('_', ' ')
-                        var artist = "Unknown Artist"
-                        var album = folderName
-                        var durationMs = 0L
-
-                        try {
-                            val mmr = MediaMetadataRetriever()
-                            context.contentResolver.openFileDescriptor(trackUri, "r")?.use { pfd ->
-                                mmr.setDataSource(pfd.fileDescriptor)
-                                mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)?.let { title = it }
-                                mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)?.let { artist = it }
-                                mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)?.let { album = it }
-                                mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.let { durationMs = it }
-                            }
-                            mmr.release()
-                        } catch (_: Exception) {}
-
-                        tracks.add(
-                            Track(
-                                id = "folder_${childDocId.hashCode()}",
-                                contentUri = trackUri.toString(),
-                                title = title,
-                                artist = artist,
-                                album = album,
-                                durationMs = durationMs,
-                                mimeType = "audio/mpeg",
-                                folderPath = folderName,
-                                dateAdded = lastMod
-                            )
-                        )
-                    }
+        val mmr = MediaMetadataRetriever()
+        try {
+            context.contentResolver.openFileDescriptor(trackUri, "r")?.use { pfd ->
+                mmr.setDataSource(pfd.fileDescriptor)
+                mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)?.let { title = it }
+                mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)?.let { artist = it }
+                mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)?.let { album = it }
+                mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.let { durationMs = it }
+                mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_BITRATE)?.toIntOrNull()?.let { bitrateKbps = it / 1000 }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_SAMPLERATE)?.toIntOrNull()?.let { sampleRateHz = it }
                 }
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.w(TAG, "Could not read metadata for a track in the selected folder (${e.javaClass.simpleName})")
+        } finally {
+            try {
+                mmr.release()
+            } catch (_: Exception) {}
         }
 
-        Pair(folderName, tracks)
+        return Track(
+            id = folderTrackId(docId),
+            contentUri = trackUri.toString(),
+            title = title,
+            artist = artist,
+            album = album,
+            durationMs = durationMs,
+            mimeType = mimeType,
+            folderPath = folderName,
+            dateAdded = lastModified,
+            bitrateKbps = bitrateKbps,
+            sampleRateHz = sampleRateHz
+        )
     }
 
-    suspend fun importFolderAsPlaylist(folderName: String, tracks: List<Track>): Long = withContext(Dispatchers.IO) {
-        val playlistId = playlistDao.insertPlaylist(PlaylistEntity(name = folderName))
-        tracks.forEachIndexed { index, track ->
-            playlistDao.insertPlaylistTrack(
-                PlaylistTrackEntity(
-                    playlistId = playlistId,
-                    trackId = track.id,
-                    sortOrder = index,
-                    uri = track.contentUri,
-                    title = track.title,
-                    artist = track.artist,
-                    album = track.album,
-                    durationMs = track.durationMs,
-                    albumArtUri = track.albumArtUri
+    private fun folderTrackId(docId: String) = "folder_${docId.hashCode()}"
+
+    suspend fun setTracks(tracks: List<Track>) {
+        _allTracks.value = tracks
+        withContext(Dispatchers.IO) {
+            libraryDao.replaceAll(tracks.map {
+                LibraryTrackEntity(
+                    id = it.id,
+                    contentUri = it.contentUri,
+                    title = it.title,
+                    artist = it.artist,
+                    album = it.album,
+                    durationMs = it.durationMs,
+                    folderPath = it.folderPath,
+                    dateAdded = it.dateAdded,
+                    mimeType = it.mimeType,
+                    bitrateKbps = it.bitrateKbps,
+                    sampleRateHz = it.sampleRateHz
                 )
-            )
+            })
         }
-        playlistId
     }
 
-    fun addCustomTracks(newTracks: List<Track>) {
-        val current = _allTracks.value.toMutableList()
-        val existingIds = current.map { it.id }.toSet()
-        val filteredNew = newTracks.filterNot { existingIds.contains(it.id) }
-        if (filteredNew.isNotEmpty()) {
-            current.addAll(filteredNew)
-            _allTracks.value = current
+    /** Publishes the last persisted scan immediately and returns it for incremental rescans. */
+    suspend fun loadCachedLibrary(): List<Track> {
+        val tracks = withContext(Dispatchers.IO) {
+            libraryDao.getAll().map {
+                Track(
+                    id = it.id,
+                    contentUri = it.contentUri,
+                    title = it.title,
+                    artist = it.artist,
+                    album = it.album,
+                    durationMs = it.durationMs,
+                    folderPath = it.folderPath,
+                    dateAdded = it.dateAdded,
+                    mimeType = it.mimeType,
+                    bitrateKbps = it.bitrateKbps,
+                    sampleRateHz = it.sampleRateHz
+                )
+            }
         }
+        _allTracks.value = tracks
+        return tracks
     }
 
 
@@ -437,17 +433,22 @@ class MusicRepository(private val context: Context) {
         try {
             if (track.albumArtUri != null) {
                 val uri = Uri.parse(track.albumArtUri)
-                context.contentResolver.openInputStream(uri)?.use { stream ->
-                    bitmap = BitmapFactory.decodeStream(stream)
+                bitmap = decodeSampled { opts ->
+                    context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
                 }
             } else if (track.contentUri.startsWith("content://")) {
                 val mmr = MediaMetadataRetriever()
-                mmr.setDataSource(context, Uri.parse(track.contentUri))
-                val artBytes = mmr.embeddedPicture
-                if (artBytes != null) {
-                    bitmap = BitmapFactory.decodeByteArray(artBytes, 0, artBytes.size)
+                try {
+                    mmr.setDataSource(context, Uri.parse(track.contentUri))
+                    val artBytes = mmr.embeddedPicture
+                    if (artBytes != null) {
+                        bitmap = decodeSampled { opts ->
+                            BitmapFactory.decodeByteArray(artBytes, 0, artBytes.size, opts)
+                        }
+                    }
+                } finally {
+                    mmr.release()
                 }
-                mmr.release()
             }
         } catch (_: Exception) {}
 
@@ -476,5 +477,14 @@ class MusicRepository(private val context: Context) {
 
         accentColorCache[track.id] = extractedColor
         extractedColor
+    }
+
+    // Palette only needs a thumbnail; decoding full-size cover art can allocate tens of MB.
+    private fun decodeSampled(decode: (BitmapFactory.Options) -> Bitmap?): Bitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        decode(bounds)
+        var sample = 1
+        while (bounds.outWidth / (sample * 2) >= 200 && bounds.outHeight / (sample * 2) >= 200) sample *= 2
+        return decode(BitmapFactory.Options().apply { inSampleSize = sample })
     }
 }

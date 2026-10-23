@@ -276,7 +276,7 @@ fun StatsScreen(
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
                 ProfileTelemetryRow("Engine Architecture", "AndroidX Media3 ExoPlayer")
-                ProfileTelemetryRow("Audio Codec Target", "MPEG-1 Layer III (MP3)")
+                ProfileTelemetryRow("Supported Formats", "MP3 · FLAC · M4A · AAC · OGG · Opus · WAV")
                 ProfileTelemetryRow("Digital Signal Processor", "Android Hardware AudioFX Equalizer")
                 ProfileTelemetryRow("Privacy Architecture", "100% Local / Zero Cloud Leakage")
                 ProfileTelemetryRow("Sample Rate", "44,100 Hz Hi-Fi Stereo")

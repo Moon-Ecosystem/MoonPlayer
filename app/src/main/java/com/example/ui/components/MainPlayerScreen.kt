@@ -75,6 +75,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.media3.common.Player
 import coil.compose.AsyncImage
+import com.example.data.artModel
+import com.example.data.repository.audioFormatLabel
 import com.example.R
 import com.example.data.model.Track
 import com.example.ui.theme.LocalAccentColor
@@ -98,9 +100,8 @@ fun MainPlayerScreen(
 ) {
     val currentTrack by viewModel.currentTrack.collectAsState()
     val isPlaying by viewModel.isPlaying.collectAsState()
-    val positionMs by viewModel.currentPositionMs.collectAsState()
-    val durationMs by viewModel.durationMs.collectAsState()
     val queue by viewModel.queue.collectAsState()
+    val playingFrom by viewModel.playingFrom.collectAsState()
     val currentIndex by viewModel.currentIndex.collectAsState()
     val repeatMode by viewModel.repeatMode.collectAsState()
     val isShuffle by viewModel.isShuffleMode.collectAsState()
@@ -115,12 +116,7 @@ fun MainPlayerScreen(
     val accent = LocalAccentColor.current
     val isFavorite = currentTrack?.let { favoriteIds.contains(it.id) } ?: false
 
-    var isDraggingSlider by remember { mutableStateOf(false) }
-    var dragPositionMs by remember { mutableFloatStateOf(0f) }
     var showOverflowMenu by remember { mutableStateOf(false) }
-
-    val activePositionMs = if (isDraggingSlider) dragPositionMs.toLong() else positionMs
-    val totalDuration = if (durationMs > 0) durationMs else (currentTrack?.durationMs ?: 1L)
 
     BoxWithConstraints(
         modifier = modifier
@@ -137,6 +133,8 @@ fun MainPlayerScreen(
             modifier = contentWidthModifier
                 .fillMaxSize()
                 .padding(horizontal = 20.dp)
+                // Swiping up past the bottom of the player opens the queue.
+                .overscrollNavigation(onPullUp = { viewModel.navigateTo(Screen.QUEUE) })
                 .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween
@@ -167,8 +165,13 @@ fun MainPlayerScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier.weight(1f)
                 ) {
+                    // Where the queue came from (playlist, folder, album...); album if unknown.
                     Text(
-                        text = (currentTrack?.album?.uppercase() ?: "MOON PLAYER").take(24),
+                        text = when {
+                            currentTrack == null -> "MOON PLAYER"
+                            playingFrom != null -> "FROM: ${playingFrom!!.uppercase()}"
+                            else -> currentTrack!!.album.uppercase()
+                        },
                         style = MaterialTheme.typography.labelSmall,
                         color = accent,
                         letterSpacing = 1.5.sp,
@@ -263,14 +266,7 @@ fun MainPlayerScreen(
                     .clickable { viewModel.navigateTo(Screen.QUEUE) },
                 contentAlignment = Alignment.Center
             ) {
-                if (!currentTrack?.albumArtUri.isNullOrEmpty()) {
-                    AsyncImage(
-                        model = currentTrack?.albumArtUri,
-                        contentDescription = "Album Art for ${currentTrack?.title}",
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                } else {
+                // Placeholder first; the artwork (embedded or standalone) draws over it when present.
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center,
@@ -305,6 +301,13 @@ fun MainPlayerScreen(
                             overflow = TextOverflow.Ellipsis
                         )
                     }
+                currentTrack?.let { track ->
+                    AsyncImage(
+                        model = track.artModel,
+                        contentDescription = "Album Art for ${track.title}",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
                 }
             }
 
@@ -315,6 +318,12 @@ fun MainPlayerScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
                     .fillMaxWidth()
+                    // With nothing loaded, the "Select a song" prompt opens All Songs.
+                    .then(
+                        if (currentTrack == null) {
+                            Modifier.clickable { viewModel.navigateTo(Screen.LIBRARY) }
+                        } else Modifier
+                    )
                     .padding(horizontal = 16.dp)
             ) {
                 Text(
@@ -356,7 +365,14 @@ fun MainPlayerScreen(
                 Spacer(modifier = Modifier.height(8.dp))
 
                 // Technical Audio Badge
-                val techText = "[ MP3 · ${currentTrack?.bitrateKbps ?: 320} KBPS · 44.1 KHZ ]"
+                // Only what the file actually reported; unknown values are left out instead of faked.
+                val techText = currentTrack?.let { t ->
+                    listOfNotNull(
+                        t.mimeType.takeIf { it.isNotBlank() }?.let(::audioFormatLabel),
+                        t.bitrateKbps.takeIf { it > 0 }?.let { "$it KBPS" },
+                        t.sampleRateHz.takeIf { it > 0 }?.let { "%.1f KHZ".format(it / 1000f) }
+                    ).joinToString(" · ")
+                }.orEmpty().ifBlank { "--" }.let { "[ $it ]" }
                 Surface(
                     shape = RoundedCornerShape(4.dp),
                     color = TerminalRaisedPanel,
@@ -374,89 +390,12 @@ fun MainPlayerScreen(
             Spacer(modifier = Modifier.height(14.dp))
 
             // 4. SEEK BAR WITH ELAPSED AND TOTAL/REMAINING TIME
-            Column(
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                val sliderValue = if (totalDuration > 0) {
-                    (activePositionMs.toFloat() / totalDuration.toFloat()).coerceIn(0f, 1f)
-                } else 0f
-
-                Slider(
-                    value = sliderValue,
-                    onValueChange = { frac ->
-                        isDraggingSlider = true
-                        dragPositionMs = frac * totalDuration
-                    },
-                    onValueChangeFinished = {
-                        viewModel.seekTo(dragPositionMs.toLong())
-                        isDraggingSlider = false
-                    },
-                    colors = SliderDefaults.colors(
-                        thumbColor = accent,
-                        activeTrackColor = accent,
-                        inactiveTrackColor = TerminalBorder
-                    ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("player_seek_slider")
-                )
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 6.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = Track.formatDuration(activePositionMs),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MutedText,
-                        fontFamily = FontFamily.Monospace
-                    )
-
-                    // Speed button indicator
-                    Surface(
-                        shape = RoundedCornerShape(4.dp),
-                        color = TerminalRaisedPanel,
-                        border = androidx.compose.foundation.BorderStroke(0.5.dp, TerminalBorder),
-                        modifier = Modifier.clickable {
-                            val nextSpeed = when (speed) {
-                                1.0f -> 1.25f
-                                1.25f -> 1.5f
-                                1.5f -> 2.0f
-                                2.0f -> 0.75f
-                                else -> 1.0f
-                            }
-                            viewModel.setPlaybackSpeed(nextSpeed)
-                        }
-                    ) {
-                        Text(
-                            text = "${speed}x",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = accent,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                        )
-                    }
-
-                    val rightTimeText = if (settings.showRemainingTime) {
-                        val remaining = (totalDuration - activePositionMs).coerceAtLeast(0L)
-                        "-${Track.formatDuration(remaining)}"
-                    } else {
-                        Track.formatDuration(totalDuration)
-                    }
-
-                    Text(
-                        text = rightTimeText,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MutedText,
-                        fontFamily = FontFamily.Monospace,
-                        modifier = Modifier.clickable {
-                            viewModel.setShowRemainingTime(!settings.showRemainingTime)
-                        }
-                    )
-                }
-            }
+            SeekBarSection(
+                viewModel = viewModel,
+                fallbackDurationMs = currentTrack?.durationMs ?: 1L,
+                speed = speed,
+                showRemainingTime = settings.showRemainingTime
+            )
 
             Spacer(modifier = Modifier.height(10.dp))
 
@@ -693,6 +632,109 @@ fun MainPlayerScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+// Isolated so the 200ms position ticks recompose only the seek bar, not the whole player.
+@Composable
+private fun SeekBarSection(
+    viewModel: MainViewModel,
+    fallbackDurationMs: Long,
+    speed: Float,
+    showRemainingTime: Boolean
+) {
+    val positionMs by viewModel.currentPositionMs.collectAsState()
+    val durationMs by viewModel.durationMs.collectAsState()
+    val accent = LocalAccentColor.current
+
+    var isDraggingSlider by remember { mutableStateOf(false) }
+    var dragPositionMs by remember { mutableFloatStateOf(0f) }
+
+    val activePositionMs = if (isDraggingSlider) dragPositionMs.toLong() else positionMs
+    val totalDuration = if (durationMs > 0) durationMs else fallbackDurationMs
+
+    Column(
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        val sliderValue = if (totalDuration > 0) {
+            (activePositionMs.toFloat() / totalDuration.toFloat()).coerceIn(0f, 1f)
+        } else 0f
+
+        Slider(
+            value = sliderValue,
+            onValueChange = { frac ->
+                isDraggingSlider = true
+                dragPositionMs = frac * totalDuration
+            },
+            onValueChangeFinished = {
+                viewModel.seekTo(dragPositionMs.toLong())
+                isDraggingSlider = false
+            },
+            colors = SliderDefaults.colors(
+                thumbColor = accent,
+                activeTrackColor = accent,
+                inactiveTrackColor = TerminalBorder
+            ),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("player_seek_slider")
+        )
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 6.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = Track.formatDuration(activePositionMs),
+                style = MaterialTheme.typography.labelSmall,
+                color = MutedText,
+                fontFamily = FontFamily.Monospace
+            )
+
+            // Speed button indicator
+            Surface(
+                shape = RoundedCornerShape(4.dp),
+                color = TerminalRaisedPanel,
+                border = androidx.compose.foundation.BorderStroke(0.5.dp, TerminalBorder),
+                modifier = Modifier.clickable {
+                    val nextSpeed = when (speed) {
+                        1.0f -> 1.25f
+                        1.25f -> 1.5f
+                        1.5f -> 2.0f
+                        2.0f -> 0.75f
+                        else -> 1.0f
+                    }
+                    viewModel.setPlaybackSpeed(nextSpeed)
+                }
+            ) {
+                Text(
+                    text = "${speed}x",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = accent,
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                )
+            }
+
+            val rightTimeText = if (showRemainingTime) {
+                val remaining = (totalDuration - activePositionMs).coerceAtLeast(0L)
+                "-${Track.formatDuration(remaining)}"
+            } else {
+                Track.formatDuration(totalDuration)
+            }
+
+            Text(
+                text = rightTimeText,
+                style = MaterialTheme.typography.labelSmall,
+                color = MutedText,
+                fontFamily = FontFamily.Monospace,
+                modifier = Modifier.clickable {
+                    viewModel.setShowRemainingTime(!showRemainingTime)
+                }
+            )
         }
     }
 }

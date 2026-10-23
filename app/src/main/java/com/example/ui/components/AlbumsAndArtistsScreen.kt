@@ -1,8 +1,5 @@
 package com.example.ui.components
 
-import android.content.Intent
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -51,7 +48,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
@@ -59,6 +55,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.example.data.artModel
 import com.example.R
 import com.example.data.model.Track
 import com.example.ui.theme.LocalAccentColor
@@ -79,27 +76,17 @@ fun GroupedTracksScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val context = LocalContext.current
     val allTracks by viewModel.allTracks.collectAsState()
+    val selectedFolderName by viewModel.selectedFolderName.collectAsState()
+    val folderAccessError by viewModel.folderAccessError.collectAsState()
     val accent = LocalAccentColor.current
 
     var selectedGroup by remember { mutableStateOf<String?>(null) }
     var folderResultInfo by remember { mutableStateOf<Pair<String, Int>?>(null) }
 
-    val folderPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocumentTree()
-    ) { uri ->
-        if (uri != null) {
-            try {
-                context.contentResolver.takePersistableUriPermission(
-                    uri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION
-                )
-            } catch (_: Exception) {}
-
-            viewModel.linkFolderAndScan(uri, autoImportAsPlaylist = false) { folderName, count ->
-                folderResultInfo = Pair(folderName, count)
-            }
+    val pickFolder = rememberFolderPicker { uri, flags ->
+        viewModel.addFolder(uri, flags) { folderName, count ->
+            folderResultInfo = Pair(folderName, count)
         }
     }
 
@@ -154,10 +141,10 @@ fun GroupedTracksScreen(
                     }
                 }
 
-                // If Folders Mode, show Link Folder action button
+                // If Folders Mode, show the folder action button
                 if (mode == GroupMode.FOLDERS) {
                     Button(
-                        onClick = { folderPickerLauncher.launch(null) },
+                        onClick = pickFolder,
                         colors = ButtonDefaults.buttonColors(
                             containerColor = accent,
                             contentColor = com.example.ui.theme.buttonContentColorFor(accent)
@@ -167,7 +154,11 @@ fun GroupedTracksScreen(
                     ) {
                         Icon(imageVector = Icons.Default.DriveFolderUpload, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Link Folder", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            if (selectedFolderName.isBlank()) "Select Folder" else "Add Folder",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 }
             }
@@ -182,17 +173,34 @@ fun GroupedTracksScreen(
                     border = androidx.compose.foundation.BorderStroke(1.dp, TerminalBorder),
                     modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
                 ) {
-                    Row(
-                        modifier = Modifier.padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(imageVector = Icons.Default.Folder, contentDescription = null, tint = accent, modifier = Modifier.size(20.dp))
-                        Spacer(modifier = Modifier.width(10.dp))
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(imageVector = Icons.Default.Folder, contentDescription = null, tint = accent, modifier = Modifier.size(20.dp))
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = if (selectedFolderName.isBlank()) {
+                                    "No folder selected. Choose a folder to browse its music."
+                                } else {
+                                    "Library folders: $selectedFolderName"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = SecondaryText
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "Link any folder on your device. Only .mp3 audio files will be extracted without folder clutter.",
+                            text = "Only music files inside these folders and their subfolders are scanned. Other storage is never accessed.",
                             style = MaterialTheme.typography.bodySmall,
-                            color = SecondaryText
+                            color = MutedText
                         )
+                        folderAccessError?.let { error ->
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = error,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
                     }
                 }
             }
@@ -207,13 +215,16 @@ fun GroupedTracksScreen(
                         if (mode == GroupMode.FOLDERS) {
                             Spacer(modifier = Modifier.height(10.dp))
                             Button(
-                                onClick = { folderPickerLauncher.launch(null) },
+                                onClick = pickFolder,
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = accent,
                                     contentColor = com.example.ui.theme.buttonContentColorFor(accent)
                                 )
                             ) {
-                                Text("Link Device Folder", fontWeight = FontWeight.Bold)
+                                Text(
+                                    if (selectedFolderName.isBlank()) "Select Music Folder" else "Add Folder",
+                                    fontWeight = FontWeight.Bold
+                                )
                             }
                         }
                     }
@@ -255,21 +266,19 @@ fun GroupedTracksScreen(
                                             .border(0.5.dp, TerminalBorder, if (mode == GroupMode.ARTISTS) CircleShape else RoundedCornerShape(6.dp)),
                                         contentAlignment = Alignment.Center
                                     ) {
-                                        if (sampleTrack?.albumArtUri != null) {
+                                        val icon = when (mode) {
+                                            GroupMode.ALBUMS -> Icons.Default.Album
+                                            GroupMode.ARTISTS -> Icons.Default.Person
+                                            GroupMode.FOLDERS -> Icons.Default.Folder
+                                        }
+                                        Icon(imageVector = icon, contentDescription = null, tint = accent, modifier = Modifier.size(24.dp))
+                                        sampleTrack?.let {
                                             AsyncImage(
-                                                model = sampleTrack.albumArtUri,
+                                                model = it.artModel,
                                                 contentDescription = null,
                                                 modifier = Modifier.fillMaxSize(),
-                                                contentScale = ContentScale.Crop,
-                                                error = painterResource(id = R.drawable.moon_player_logo)
+                                                contentScale = ContentScale.Crop
                                             )
-                                        } else {
-                                            val icon = when (mode) {
-                                                GroupMode.ALBUMS -> Icons.Default.Album
-                                                GroupMode.ARTISTS -> Icons.Default.Person
-                                                GroupMode.FOLDERS -> Icons.Default.Folder
-                                            }
-                                            Icon(imageVector = icon, contentDescription = null, tint = accent, modifier = Modifier.size(24.dp))
                                         }
                                     }
 
@@ -283,7 +292,7 @@ fun GroupedTracksScreen(
                                             color = PrimaryText
                                         )
                                         Text(
-                                            text = "${groupTracks.size} MP3s (tap to view)",
+                                            text = "${groupTracks.size} tracks (tap to view)",
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MutedText
                                         )
@@ -317,7 +326,7 @@ fun GroupedTracksScreen(
 
                                     Button(
                                         onClick = {
-                                            viewModel.playTrackList(groupTracks, 0)
+                                            viewModel.playTrackList(groupTracks, 0, source = groupKey)
                                             viewModel.navigateTo(Screen.PLAYER)
                                         },
                                         colors = ButtonDefaults.buttonColors(
@@ -347,7 +356,7 @@ fun GroupedTracksScreen(
             text = {
                 Column {
                     Text(
-                        text = "Successfully discovered $count .mp3 file(s) in this folder. Only MP3 files have been linked; all subfolders and other files are omitted.",
+                        text = "Successfully discovered $count music file(s) in this folder and its subfolders. Nothing outside the selected folder was scanned.",
                         color = SecondaryText,
                         style = MaterialTheme.typography.bodyMedium
                     )

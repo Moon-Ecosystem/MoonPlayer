@@ -31,6 +31,23 @@ data class PlaylistTrackEntity(
     val albumArtUri: String? = null
 )
 
+/** Last scan of the selected folder, so relaunch shows the library without re-reading every file. */
+@Entity(tableName = "library_tracks")
+data class LibraryTrackEntity(
+    @PrimaryKey
+    val id: String,
+    val contentUri: String,
+    val title: String,
+    val artist: String,
+    val album: String,
+    val durationMs: Long,
+    val folderPath: String,
+    val dateAdded: Long,
+    val mimeType: String,
+    val bitrateKbps: Int,
+    val sampleRateHz: Int
+)
+
 @Entity(tableName = "favorites")
 data class FavoriteEntity(
     @PrimaryKey

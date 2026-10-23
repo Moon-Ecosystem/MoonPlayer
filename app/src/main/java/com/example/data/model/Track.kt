@@ -9,15 +9,16 @@ data class Track(
     val durationMs: Long,
     val trackNumber: Int = 0,
     val year: Int = 0,
-    val mimeType: String = "audio/mpeg",
+    // Empty/0 mean "not known" (e.g. tracks rebuilt from playlists); the UI hides them.
+    val mimeType: String = "",
     val albumArtUri: String? = null,
     val folderPath: String = "",
     val dateAdded: Long = 0L,
     val isFavorite: Boolean = false,
     val playCount: Int = 0,
     val lastPlayedTime: Long = 0L,
-    val bitrateKbps: Int = 320,
-    val sampleRateHz: Int = 44100
+    val bitrateKbps: Int = 0,
+    val sampleRateHz: Int = 0
 ) {
     val formattedDuration: String
         get() = formatDuration(durationMs)

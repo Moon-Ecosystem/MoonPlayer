@@ -75,8 +75,9 @@ val Typography = Typography(
         fontWeight = FontWeight.Medium,
         fontSize = 13.sp,
         lineHeight = 18.sp,
-        letterSpacing = 0.5.sp,
-        color = PrimaryText
+        letterSpacing = 0.5.sp
+        // No color: Material buttons render labels in labelLarge, and a fixed color here overrode
+        // their content color (white text on light accent buttons).
     ),
     labelMedium = TextStyle(
         fontFamily = FontFamily.Monospace,
