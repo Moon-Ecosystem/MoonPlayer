@@ -158,5 +158,27 @@ interface TrackStatDao {
             )
         }
     }
+
+    @Query("SELECT * FROM playlist_stats ORDER BY playCount DESC LIMIT 10")
+    fun getTopPlaylists(): Flow<List<PlaylistStatEntity>>
+
+    @Query("SELECT * FROM playlist_stats WHERE name = :name")
+    suspend fun getPlaylistStat(name: String): PlaylistStatEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertOrUpdatePlaylistStat(stat: PlaylistStatEntity)
+
+    @Transaction
+    suspend fun recordPlaylistPlay(name: String, durationMs: Long) {
+        val existing = getPlaylistStat(name)
+        insertOrUpdatePlaylistStat(
+            PlaylistStatEntity(
+                name = name,
+                playCount = (existing?.playCount ?: 0) + 1,
+                totalTimeMs = (existing?.totalTimeMs ?: 0L) + durationMs,
+                lastPlayedAt = System.currentTimeMillis()
+            )
+        )
+    }
 }
 

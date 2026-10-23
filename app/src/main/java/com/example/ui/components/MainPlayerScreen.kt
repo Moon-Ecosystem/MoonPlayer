@@ -1,6 +1,5 @@
 package com.example.ui.components
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -13,18 +12,16 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Equalizer
 import androidx.compose.material.icons.filled.Favorite
@@ -39,11 +36,18 @@ import androidx.compose.material.icons.filled.RepeatOne
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
-import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material.icons.filled.CreateNewFolder
+import androidx.compose.material.icons.filled.LibraryMusic
+import androidx.compose.material.icons.filled.PlaylistPlay
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
@@ -67,7 +71,10 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -124,20 +131,19 @@ fun MainPlayerScreen(
             .background(TerminalBlack)
     ) {
         val maxW = maxWidth
+        val maxH = maxHeight
         val contentWidthModifier = Modifier
             .fillMaxWidth()
             .widthIn(max = 520.dp)
             .align(Alignment.Center)
 
+        // No scrolling: the cover shrinks to fit short screens, and weighted spacers share out
+        // whatever height is left so the controls never pool at one end.
         Column(
             modifier = contentWidthModifier
                 .fillMaxSize()
-                .padding(horizontal = 20.dp)
-                // Swiping up past the bottom of the player opens the queue.
-                .overscrollNavigation(onPullUp = { viewModel.navigateTo(Screen.QUEUE) })
-                .verticalScroll(rememberScrollState()),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.SpaceBetween
+                .padding(horizontal = 20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
             // 1. TOP APP BAR
             Row(
@@ -191,6 +197,11 @@ fun MainPlayerScreen(
                     )
                 }
 
+                // Equalizer, sleep timer, A-B loop and speed live here; the dot says one is on.
+                val sleepActive = sleepTimerSecs != null || stopAtEnd
+                // The equalizer is on by default; only a non-flat curve counts as "changed".
+                val eqActive = settings.equalizerEnabled && settings.equalizerPreset != "Flat"
+                val anyToolActive = eqActive || sleepActive || abStart != null || speed != 1.0f
                 Box {
                     IconButton(
                         onClick = { showOverflowMenu = true },
@@ -200,8 +211,17 @@ fun MainPlayerScreen(
                     ) {
                         Icon(
                             imageVector = Icons.Default.MoreVert,
-                            contentDescription = "Player options",
+                            contentDescription = if (anyToolActive) "Player options, some active" else "Player options",
                             tint = PrimaryText
+                        )
+                    }
+                    if (anyToolActive) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(top = 10.dp, end = 10.dp)
+                                .size(7.dp)
+                                .background(accent, CircleShape)
                         )
                     }
 
@@ -210,27 +230,48 @@ fun MainPlayerScreen(
                         onDismissRequest = { showOverflowMenu = false },
                         modifier = Modifier.background(TerminalRaisedPanel)
                     ) {
-                        DropdownMenuItem(
-                            text = { Text("View Queue (${queue.size})", color = PrimaryText) },
-                            onClick = {
-                                showOverflowMenu = false
-                                viewModel.navigateTo(Screen.QUEUE)
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Equalizer", color = PrimaryText) },
-                            onClick = {
-                                showOverflowMenu = false
-                                viewModel.openEqualizer()
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Sleep Timer", color = PrimaryText) },
-                            onClick = {
-                                showOverflowMenu = false
-                                viewModel.openSleepTimer()
-                            }
-                        )
+                        PlayerMenuItem(
+                            label = "Equalizer",
+                            status = if (settings.equalizerEnabled) settings.equalizerPreset else "Off",
+                            active = eqActive
+                        ) {
+                            showOverflowMenu = false
+                            viewModel.openEqualizer()
+                        }
+                        PlayerMenuItem(
+                            label = "Sleep timer",
+                            status = when {
+                                sleepTimerSecs != null -> sleepTimerSecs!!.let { String.format("%02d:%02d", it / 60, it % 60) }
+                                stopAtEnd -> "End of song"
+                                else -> "Off"
+                            },
+                            active = sleepActive
+                        ) {
+                            showOverflowMenu = false
+                            viewModel.openSleepTimer()
+                        }
+                        // A-B and speed step through their values in place, so the menu stays open.
+                        PlayerMenuItem(
+                            label = "A-B loop",
+                            status = when {
+                                abStart != null && abEnd != null -> "On · tap to clear"
+                                abStart != null -> "Tap to set B"
+                                else -> "Tap to set A"
+                            },
+                            active = abStart != null
+                        ) { viewModel.setAbLoop() }
+                        PlayerMenuItem(label = "Playback speed", status = "${speed}x", active = speed != 1.0f) {
+                            viewModel.setPlaybackSpeed(
+                                when (speed) {
+                                    1.0f -> 1.25f
+                                    1.25f -> 1.5f
+                                    1.5f -> 2.0f
+                                    2.0f -> 0.75f
+                                    else -> 1.0f
+                                }
+                            )
+                        }
+                        HorizontalDivider(color = TerminalBorder)
                         DropdownMenuItem(
                             text = { Text("Browse Library", color = PrimaryText) },
                             onClick = {
@@ -251,19 +292,20 @@ fun MainPlayerScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.weight(1f).heightIn(min = 4.dp))
 
-            // 2. STATIC SQUARE ALBUM COVER (AMOLED Styled)
-            val coverSize = (maxW * 0.76f).coerceIn(240.dp, 330.dp)
+            // 2. SQUARE ALBUM COVER: full content width, unless the screen is too short for that
+            // plus the ~400dp of title, seek bar, controls and Up next below it.
+            val coverSize = (maxW.coerceAtMost(520.dp) - 40.dp)
+                .coerceAtMost(maxH - 400.dp)
+                .coerceAtLeast(140.dp)
             Box(
                 modifier = Modifier
                     .size(coverSize)
-                    .aspectRatio(1f)
                     .shadow(16.dp, RoundedCornerShape(16.dp))
                     .clip(RoundedCornerShape(16.dp))
                     .background(TerminalRaisedPanel)
-                    .border(1.5.dp, TerminalBorder, RoundedCornerShape(16.dp))
-                    .clickable { viewModel.navigateTo(Screen.QUEUE) },
+                    .border(1.5.dp, TerminalBorder, RoundedCornerShape(16.dp)),
                 contentAlignment = Alignment.Center
             ) {
                 // Placeholder first; the artwork (embedded or standalone) draws over it when present.
@@ -311,56 +353,51 @@ fun MainPlayerScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(18.dp))
+            Spacer(modifier = Modifier.weight(1f).heightIn(min = 12.dp))
 
-            // 3. TRACK TITLE, ARTIST, AND ALBUM NAME CENTERED
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    // With nothing loaded, the "Select a song" prompt opens All Songs.
-                    .then(
-                        if (currentTrack == null) {
-                            Modifier.clickable { viewModel.navigateTo(Screen.LIBRARY) }
-                        } else Modifier
-                    )
-                    .padding(horizontal = 16.dp)
+            // 3. TITLE, ARTIST · ALBUM AND FAVOURITE (or how to start, when nothing's loaded)
+            if (currentTrack == null) NothingPlayingPrompt(viewModel) else Column(
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Text(
-                    text = currentTrack?.title ?: "No Track Selected",
-                    style = MaterialTheme.typography.headlineSmall.copy(
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 20.sp
-                    ),
-                    color = PrimaryText,
-                    textAlign = TextAlign.Center,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-
-                Spacer(modifier = Modifier.height(4.dp))
-
-                Text(
-                    text = currentTrack?.artist ?: "Select a song to start playback",
-                    style = MaterialTheme.typography.bodyMedium.copy(
-                        fontWeight = FontWeight.Medium
-                    ),
-                    color = accent,
-                    textAlign = TextAlign.Center,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-
-                Spacer(modifier = Modifier.height(2.dp))
-
-                Text(
-                    text = currentTrack?.album ?: "Moon Player Library",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MutedText,
-                    textAlign = TextAlign.Center,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = currentTrack?.title.orEmpty(),
+                            style = MaterialTheme.typography.headlineSmall.copy(
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 21.sp
+                            ),
+                            color = PrimaryText,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(modifier = Modifier.height(3.dp))
+                        Text(
+                            text = buildAnnotatedString {
+                                withStyle(SpanStyle(color = accent)) { append(currentTrack?.artist.orEmpty()) }
+                                currentTrack?.album?.takeIf { it.isNotBlank() }?.let {
+                                    withStyle(SpanStyle(color = MutedText)) { append(" · $it") }
+                                }
+                            },
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    IconButton(
+                        onClick = { currentTrack?.let { viewModel.toggleFavorite(it.id) } },
+                        modifier = Modifier
+                            .testTag("favorite_button")
+                            .minimumInteractiveComponentSize()
+                    ) {
+                        Icon(
+                            imageVector = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                            contentDescription = if (isFavorite) "Remove from favourites" else "Add to favourites",
+                            tint = if (isFavorite) accent else MutedText,
+                            modifier = Modifier.size(26.dp)
+                        )
+                    }
+                }
 
                 Spacer(modifier = Modifier.height(8.dp))
 
@@ -387,39 +424,36 @@ fun MainPlayerScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.weight(1f).heightIn(min = 10.dp))
 
             // 4. SEEK BAR WITH ELAPSED AND TOTAL/REMAINING TIME
             SeekBarSection(
                 viewModel = viewModel,
                 fallbackDurationMs = currentTrack?.durationMs ?: 1L,
-                speed = speed,
                 showRemainingTime = settings.showRemainingTime
             )
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
-            // 5. PRIMARY CONTROLS ROW
-            // Bookmark/Queue marker, Previous, Large Play/Pause, Next, Favorite
+            // 5. CONTROLS: Shuffle, Previous, Play/Pause, Next, Repeat
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceEvenly
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                // Queue toggle / marker -> Open full Queue Screen
                 IconButton(
-                    onClick = { viewModel.navigateTo(Screen.QUEUE) },
+                    onClick = { viewModel.toggleShuffle() },
                     modifier = Modifier
-                        .testTag("queue_panel_button")
+                        .testTag("shuffle_button")
                         .minimumInteractiveComponentSize()
                 ) {
                     Icon(
-                        imageVector = Icons.Default.QueueMusic,
-                        contentDescription = "Open Queue",
-                        tint = if (queue.isNotEmpty()) accent else MutedText,
-                        modifier = Modifier.size(26.dp)
+                        imageVector = Icons.Default.Shuffle,
+                        contentDescription = if (isShuffle) "Shuffle on" else "Shuffle off",
+                        tint = if (isShuffle) accent else MutedText,
+                        modifier = Modifier.size(24.dp)
                     )
                 }
 
@@ -440,13 +474,13 @@ fun MainPlayerScreen(
 
                 // Large Play/Pause Button
                 Surface(
+                    onClick = { viewModel.togglePlayPause() },
                     shape = CircleShape,
                     color = accent,
                     shadowElevation = 6.dp,
                     modifier = Modifier
-                        .size(68.dp)
+                        .size(72.dp)
                         .testTag("play_pause_button")
-                        .clickable { viewModel.togglePlayPause() }
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
@@ -473,82 +507,6 @@ fun MainPlayerScreen(
                     )
                 }
 
-                // Favorite
-                IconButton(
-                    onClick = {
-                        currentTrack?.let { viewModel.toggleFavorite(it.id) }
-                    },
-                    modifier = Modifier
-                        .testTag("favorite_button")
-                        .minimumInteractiveComponentSize()
-                ) {
-                    Icon(
-                        imageVector = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                        contentDescription = "Favorite Track",
-                        tint = if (isFavorite) accent else MutedText,
-                        modifier = Modifier.size(26.dp)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // 6. SECONDARY CONTROLS ROW
-            // Equalizer, Shuffle, Sleep Timer, Repeat, and optional A-B loop
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceEvenly
-            ) {
-                // Equalizer
-                IconButton(
-                    onClick = { viewModel.openEqualizer() },
-                    modifier = Modifier
-                        .testTag("equalizer_button")
-                        .minimumInteractiveComponentSize()
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Equalizer,
-                        contentDescription = "Equalizer",
-                        tint = if (settings.equalizerEnabled) accent else MutedText,
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
-
-                // Shuffle
-                IconButton(
-                    onClick = { viewModel.toggleShuffle() },
-                    modifier = Modifier
-                        .testTag("shuffle_button")
-                        .minimumInteractiveComponentSize()
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Shuffle,
-                        contentDescription = "Shuffle",
-                        tint = if (isShuffle) accent else MutedText,
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
-
-                // Sleep Timer
-                IconButton(
-                    onClick = { viewModel.openSleepTimer() },
-                    modifier = Modifier
-                        .testTag("sleep_timer_button")
-                        .minimumInteractiveComponentSize()
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.Default.Timer,
-                            contentDescription = "Sleep Timer",
-                            tint = if (sleepTimerSecs != null || stopAtEnd) accent else MutedText,
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
-                }
-
                 // Repeat Mode
                 IconButton(
                     onClick = { viewModel.toggleRepeatMode() },
@@ -563,75 +521,32 @@ fun MainPlayerScreen(
                     val isRepeatActive = repeatMode != Player.REPEAT_MODE_OFF
                     Icon(
                         imageVector = repeatIcon,
-                        contentDescription = "Repeat Mode",
+                        contentDescription = when (repeatMode) {
+                            Player.REPEAT_MODE_ONE -> "Repeat one"
+                            Player.REPEAT_MODE_ALL -> "Repeat all"
+                            else -> "Repeat off"
+                        },
                         tint = if (isRepeatActive) accent else MutedText,
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
-
-                // A-B Loop Button
-                val abText = when {
-                    abStart != null && abEnd != null -> "A-B"
-                    abStart != null -> "A-"
-                    else -> "AB"
-                }
-                val isAbActive = abStart != null
-                Surface(
-                    shape = RoundedCornerShape(4.dp),
-                    color = if (isAbActive) accent.copy(alpha = 0.2f) else TerminalRaisedPanel,
-                    border = androidx.compose.foundation.BorderStroke(
-                        0.5.dp,
-                        if (isAbActive) accent else TerminalBorder
-                    ),
-                    modifier = Modifier
-                        .clickable { viewModel.setAbLoop() }
-                        .testTag("ab_loop_button")
-                ) {
-                    Text(
-                        text = abText,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (isAbActive) accent else MutedText,
-                        fontFamily = FontFamily.Monospace,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
+                        modifier = Modifier.size(24.dp)
                     )
                 }
             }
 
-            // Sleep Timer countdown banner if active
-            AnimatedVisibility(visible = sleepTimerSecs != null) {
-                sleepTimerSecs?.let { sec ->
-                    val m = sec / 60
-                    val s = sec % 60
-                    Surface(
-                        shape = RoundedCornerShape(6.dp),
-                        color = TerminalRaisedPanel,
-                        border = androidx.compose.foundation.BorderStroke(1.dp, accent.copy(alpha = 0.5f)),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 12.dp)
-                            .clickable { viewModel.openSleepTimer() }
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "SLEEP TIMER ACTIVE",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MutedText
-                            )
-                            Text(
-                                text = String.format("%02d:%02d", m, s),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = accent,
-                                fontFamily = FontFamily.Monospace,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-                }
+            Spacer(modifier = Modifier.weight(1f).heightIn(min = 12.dp))
+
+            // 6. UP NEXT: the next song; tap (or swipe up) for the whole queue
+            if (currentTrack != null) {
+                UpNextCard(
+                    nextTitle = when {
+                        isShuffle -> "Shuffle on · ${queue.size} songs"
+                        currentIndex + 1 < queue.size -> queue[currentIndex + 1].let { "${it.title} · ${it.artist}" }
+                        repeatMode == Player.REPEAT_MODE_ALL && queue.isNotEmpty() -> queue.first().let { "${it.title} · ${it.artist}" }
+                        else -> "End of queue"
+                    },
+                    onClick = { viewModel.navigateTo(Screen.QUEUE) }
+                )
             }
+            Spacer(modifier = Modifier.height(12.dp))
         }
     }
 }
@@ -641,7 +556,6 @@ fun MainPlayerScreen(
 private fun SeekBarSection(
     viewModel: MainViewModel,
     fallbackDurationMs: Long,
-    speed: Float,
     showRemainingTime: Boolean
 ) {
     val positionMs by viewModel.currentPositionMs.collectAsState()
@@ -695,30 +609,6 @@ private fun SeekBarSection(
                 fontFamily = FontFamily.Monospace
             )
 
-            // Speed button indicator
-            Surface(
-                shape = RoundedCornerShape(4.dp),
-                color = TerminalRaisedPanel,
-                border = androidx.compose.foundation.BorderStroke(0.5.dp, TerminalBorder),
-                modifier = Modifier.clickable {
-                    val nextSpeed = when (speed) {
-                        1.0f -> 1.25f
-                        1.25f -> 1.5f
-                        1.5f -> 2.0f
-                        2.0f -> 0.75f
-                        else -> 1.0f
-                    }
-                    viewModel.setPlaybackSpeed(nextSpeed)
-                }
-            ) {
-                Text(
-                    text = "${speed}x",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = accent,
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                )
-            }
-
             val rightTimeText = if (showRemainingTime) {
                 val remaining = (totalDuration - activePositionMs).coerceAtLeast(0L)
                 "-${Track.formatDuration(remaining)}"
@@ -735,6 +625,125 @@ private fun SeekBarSection(
                     viewModel.setShowRemainingTime(!showRemainingTime)
                 }
             )
+        }
+    }
+}
+
+/** A player-menu row: the tool's name, its current state on the right (accent when on). */
+@Composable
+private fun PlayerMenuItem(label: String, status: String, active: Boolean, onClick: () -> Unit) {
+    DropdownMenuItem(
+        text = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(label, color = PrimaryText, modifier = Modifier.padding(end = 24.dp))
+                Spacer(modifier = Modifier.weight(1f))
+                Text(
+                    text = status,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (active) LocalAccentColor.current else MutedText
+                )
+            }
+        },
+        onClick = onClick
+    )
+}
+
+/** The next song at the foot of the player; opens the queue. */
+@Composable
+private fun UpNextCard(nextTitle: String, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(14.dp),
+        color = TerminalRaisedPanel,
+        border = androidx.compose.foundation.BorderStroke(1.dp, TerminalBorder),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("up_next_card")
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Default.QueueMusic, contentDescription = null, tint = MutedText, modifier = Modifier.size(20.dp))
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "UP NEXT",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MutedText,
+                    fontFamily = FontFamily.Monospace,
+                    letterSpacing = 1.2.sp
+                )
+                Text(
+                    text = nextTitle,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = PrimaryText,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Open queue", tint = MutedText)
+        }
+    }
+}
+
+/**
+ * Shown in place of the track details when nothing is loaded: points to a playlist or the full
+ * song list, or to adding a folder when the library is still empty.
+ */
+@Composable
+private fun NothingPlayingPrompt(viewModel: MainViewModel) {
+    val allTracks by viewModel.allTracks.collectAsState()
+    val accent = LocalAccentColor.current
+    val pickFolder = rememberFolderPicker { uri, flags -> viewModel.addFolder(uri, flags) }
+
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+    ) {
+        Text(
+            text = "Nothing playing",
+            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold, fontSize = 20.sp),
+            color = PrimaryText
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = if (allTracks.isEmpty()) "Add a music folder to get started" else "Pick something to play",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MutedText,
+            textAlign = TextAlign.Center
+        )
+        Spacer(modifier = Modifier.height(14.dp))
+
+        val filled = ButtonDefaults.buttonColors(
+            containerColor = accent,
+            contentColor = com.example.ui.theme.buttonContentColorFor(accent)
+        )
+        if (allTracks.isEmpty()) {
+            Button(onClick = pickFolder, colors = filled) {
+                Icon(Icons.Default.CreateNewFolder, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Add Music Folder", fontWeight = FontWeight.Bold)
+            }
+        } else {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(onClick = { viewModel.navigateTo(Screen.PLAYLISTS) }, colors = filled) {
+                    Icon(Icons.Default.PlaylistPlay, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Playlists", fontWeight = FontWeight.Bold)
+                }
+                OutlinedButton(
+                    onClick = { viewModel.navigateTo(Screen.LIBRARY) },
+                    border = androidx.compose.foundation.BorderStroke(1.dp, TerminalBorder)
+                ) {
+                    Icon(Icons.Default.LibraryMusic, contentDescription = null, tint = accent, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("All Songs", color = PrimaryText)
+                }
+            }
         }
     }
 }

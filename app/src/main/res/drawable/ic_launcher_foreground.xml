@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Cat on a transparent 108dp canvas, sized to the adaptive icon safe zone. The old foreground
+     was the full logo PNG with its own opaque square, which showed as a square on the splash. -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item
-        android:width="66dp"
-        android:height="66dp"
-        android:drawable="@drawable/moon_player_logo"
+        android:width="108dp"
+        android:height="108dp"
+        android:drawable="@drawable/ic_launcher_cat"
         android:gravity="center" />
 </layer-list>

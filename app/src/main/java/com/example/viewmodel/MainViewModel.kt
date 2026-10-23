@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -147,6 +148,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         SharingStarted.WhileSubscribed(5000),
         emptyList()
     )
+    val topPlaylists = repository.topPlaylists.stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5000),
+        emptyList()
+    )
+
     val topPlayedTracks = repository.topPlayedTracks.stateIn(
         viewModelScope,
         SharingStarted.WhileSubscribed(5000),
@@ -233,6 +240,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _playingFrom = MutableStateFlow<String?>(null)
     val playingFrom = _playingFrom.asStateFlow()
 
+    // Playlist (user or folder) the current queue came from, credited in playlist stats
+    private var playingPlaylist: String? = null
+
     private val _repeatMode = MutableStateFlow(Player.REPEAT_MODE_OFF)
     val repeatMode = _repeatMode.asStateFlow()
 
@@ -265,7 +275,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val localBinder = binder as? PlaybackService.LocalBinder
             playbackService = localBinder?.getService()
             isBound = true
-            observePlaybackService()
+            viewModelScope.launch {
+                // Before observing: the queue observer saves the (still empty) queue right away,
+                // which would wipe the saved session before it could be restored.
+                restoreLastSession()
+                observePlaybackService()
+            }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -288,6 +303,39 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         getApplication<Application>().bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
     }
 
+    /**
+     * On a fresh start (empty player) with Resume on App Launch on, reloads the saved queue at the
+     * last song and position, paused. Does nothing if the service is already playing something.
+     */
+    private suspend fun restoreLastSession() {
+        val service = playbackService ?: return
+        if (service.queue.value.isNotEmpty()) return
+        val saved = settingsManager.settingsFlow.first()
+        if (!saved.resumeOnLaunch) return
+        val entries = repository.savedQueue.first()
+        if (entries.isEmpty()) return
+
+        val libraryById = allTracks.value.associateBy { it.id }
+        val tracks = entries.map { e ->
+            libraryById[e.trackId] ?: Track(
+                id = e.trackId,
+                contentUri = e.uri,
+                title = e.title,
+                artist = e.artist,
+                album = e.album,
+                durationMs = e.durationMs,
+                albumArtUri = e.albumArtUri
+            )
+        }
+        val index = tracks.indexOfFirst { it.contentUri == saved.lastTrackUri }
+        service.playTrackList(
+            tracks,
+            startIndex = index.coerceAtLeast(0),
+            startPositionMs = if (index >= 0) saved.lastPositionMs else 0L,
+            playWhenReady = false
+        )
+    }
+
     private fun observePlaybackService() {
         val service = playbackService ?: return
         viewModelScope.launch {
@@ -297,11 +345,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val track = queued?.let { q -> allTracks.value.firstOrNull { it.id == q.id } ?: q }
                 _currentTrack.value = track
                 updateAccentColor(track)
-                track?.let { repository.recordHistory(it) }
+                // A session restored paused isn't a play; don't add it to history or stats.
+                if (service.player.playWhenReady) track?.let { repository.recordHistory(it, playingPlaylist) }
+                // Player position, not 0: right after a restore it's the restored position.
+                track?.let { settingsManager.savePlaybackState(it.contentUri, service.player.currentPosition) }
             }
         }
         viewModelScope.launch {
-            service.isPlaying.collect { _isPlaying.value = it }
+            service.isPlaying.collect { playing ->
+                _isPlaying.value = playing
+                // Remember where playback stopped so Resume on App Launch can continue there.
+                if (!playing) _currentTrack.value?.let {
+                    settingsManager.savePlaybackState(it.contentUri, service.player.currentPosition)
+                }
+            }
+        }
+        viewModelScope.launch {
+            settingsManager.settingsFlow
+                .map { it.pauseOnHeadphoneDisconnect }
+                .distinctUntilChanged()
+                .collect { service.player.setHandleAudioBecomingNoisy(it) }
         }
         viewModelScope.launch {
             service.currentPositionMs.collect { _currentPositionMs.value = it }
@@ -352,10 +415,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     AccentMode.TERMINAL_GREEN -> _activeAccentColor.value = TerminalGreen
                     AccentMode.AMBER_GLOW -> _activeAccentColor.value = TerminalAmber
                     AccentMode.CYAN_PULSE -> _activeAccentColor.value = CelestialCyan
+                    AccentMode.SYSTEM -> _activeAccentColor.value = systemAccentColor()
                 }
             }
         }
     }
+
+    /**
+     * The wallpaper-based accent (Material You). Tone 200 is the light shade Android uses for
+     * accents on dark backgrounds. Before Android 12 there is none, so the default accent stands in.
+     */
+    fun systemAccentColor(): Color =
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            Color(getApplication<Application>().getColor(android.R.color.system_accent1_200))
+        } else {
+            WarmIvory
+        }
 
     private fun updateAccentColor(track: Track?) {
         val currentMode = settings.value.accentMode
@@ -542,8 +617,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** [source] names where playback started (playlist, folder, album...) for the player header. */
-    fun playTrackList(tracks: List<Track>, startIndex: Int, source: String) {
+    fun playTrackList(tracks: List<Track>, startIndex: Int, source: String, isPlaylist: Boolean = false) {
         _playingFrom.value = source
+        playingPlaylist = source.takeIf { isPlaylist }
         playbackService?.playTrackList(tracks, startIndex)
     }
 
@@ -635,6 +711,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Saves the whole queue, in order, as a new playlist named after when it was saved. */
+    fun saveQueueAsPlaylist() {
+        val tracks = queue.value
+        if (tracks.isEmpty()) return
+        viewModelScope.launch {
+            val stamp = java.text.SimpleDateFormat("d MMM, HH:mm", java.util.Locale.getDefault()).format(java.util.Date())
+            val id = repository.createPlaylist("Queue $stamp")
+            tracks.forEach { repository.addTrackToPlaylist(id, it) }
+        }
+    }
+
     fun renamePlaylist(id: Long, name: String) {
         if (name.isBlank()) return
         viewModelScope.launch {
@@ -688,6 +775,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /** Current band gains in millibels as the hardware reports them (zeros when unsupported). */
     fun equalizerBandLevels(): IntArray =
         playbackService?.equalizerHelper?.getBandLevels() ?: IntArray(5)
+
+    /** Whether the device's audio effects engine accepted the equalizer for this session. */
+    fun isEqualizerSupported(): Boolean = playbackService?.equalizerHelper?.isSupported == true
 
     fun setBassBoostStrength(strength: Int) {
         playbackService?.equalizerHelper?.setBassBoost(strength)

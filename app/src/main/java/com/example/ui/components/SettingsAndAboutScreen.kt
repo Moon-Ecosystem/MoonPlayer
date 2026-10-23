@@ -126,6 +126,10 @@ fun SettingsScreen(
             Triple(AccentMode.TERMINAL_GREEN, "Terminal Emerald", TerminalGreen),
             Triple(AccentMode.AMBER_GLOW, "Amber Glow", TerminalAmber),
             Triple(AccentMode.CYAN_PULSE, "Celestial Cyan", CelestialCyan)
+        ) + listOfNotNull(
+            // Wallpaper colours only exist on Android 12+.
+            Triple(AccentMode.SYSTEM, "System (Wallpaper)", viewModel.systemAccentColor())
+                .takeIf { android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S }
         )
 
         accentOptions.forEach { (mode, label, color) ->
@@ -421,6 +425,23 @@ fun AboutScreen(
                     color = PrimaryText,
                     lineHeight = 22.sp
                 )
+
+                HorizontalDivider(color = TerminalBorder, modifier = Modifier.padding(vertical = 12.dp))
+
+                Text(
+                    text = "> TECHNICAL",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = accent,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                ProfileTelemetryRow("Engine", "AndroidX Media3 ExoPlayer")
+                ProfileTelemetryRow("Formats", com.example.data.repository.SUPPORTED_FORMAT_LABELS)
+                ProfileTelemetryRow(
+                    "Equalizer",
+                    if (viewModel.isEqualizerSupported()) "Device equalizer active" else "Not supported on this device"
+                )
             }
         }
 
@@ -469,12 +490,22 @@ private fun SettingsToggleRow(
             Switch(
                 checked = checked,
                 onCheckedChange = onCheckedChange,
-                colors = SwitchDefaults.colors(
-                    checkedThumbColor = TerminalBlack,
-                    checkedTrackColor = accentColor,
-                    uncheckedTrackColor = TerminalBorder
-                )
+                colors = moonSwitchColors(accentColor)
             )
         }
     }
 }
+
+/**
+ * Switch colours for the dark UI. Unset unchecked colours fell back to the outline colour,
+ * which is the same as the track, so an "off" switch showed no knob at all.
+ */
+@Composable
+internal fun moonSwitchColors(accent: androidx.compose.ui.graphics.Color) = SwitchDefaults.colors(
+    checkedThumbColor = com.example.ui.theme.buttonContentColorFor(accent),
+    checkedTrackColor = accent,
+    checkedBorderColor = accent,
+    uncheckedThumbColor = MutedText,
+    uncheckedTrackColor = TerminalBlack,
+    uncheckedBorderColor = MutedText
+)

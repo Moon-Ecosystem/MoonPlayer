@@ -82,6 +82,16 @@ data class QueueEntity(
     val albumArtUri: String? = null
 )
 
+/** Songs played from a playlist (user or folder), keyed by the playlist's name. */
+@Entity(tableName = "playlist_stats")
+data class PlaylistStatEntity(
+    @PrimaryKey
+    val name: String,
+    val playCount: Int,
+    val totalTimeMs: Long,
+    val lastPlayedAt: Long
+)
+
 @Entity(tableName = "track_stats")
 data class TrackStatEntity(
     @PrimaryKey

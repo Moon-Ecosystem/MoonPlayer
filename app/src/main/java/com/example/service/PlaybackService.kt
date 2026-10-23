@@ -207,7 +207,13 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
-    fun playTrackList(tracks: List<Track>, startIndex: Int, startPositionMs: Long = 0L) {
+    /** [playWhenReady] false loads the queue paused, e.g. when restoring the last session. */
+    fun playTrackList(
+        tracks: List<Track>,
+        startIndex: Int,
+        startPositionMs: Long = 0L,
+        playWhenReady: Boolean = true
+    ) {
         if (tracks.isEmpty()) return
         _queue.value = tracks
         _currentIndex.value = startIndex.coerceIn(0, tracks.lastIndex)
@@ -215,7 +221,8 @@ class PlaybackService : MediaSessionService() {
 
         player.setMediaItems(tracks.map { it.toMediaItem() }, startIndex, startPositionMs)
         player.prepare()
-        player.play()
+        if (playWhenReady) player.play()
+        _currentPositionMs.value = startPositionMs
     }
 
     fun playTrack(track: Track) {
