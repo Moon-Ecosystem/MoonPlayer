@@ -16,3 +16,11 @@
 local.properties
 .env
 debug.keystore
+
+# AI Studio project leftovers (temp media, metadata, reference images)
+.aistudio/
+metadata.json
+public/
+
+# Local code index
+.codegraph/
