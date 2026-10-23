@@ -135,6 +135,18 @@ fun audioFormatLabel(mimeType: String): String = when (mimeType) {
     else -> mimeType.substringAfter('/').uppercase()
 }
 
+/** Every playable format's label, e.g. "MP3 · FLAC · M4A …", for the About screen. */
+val SUPPORTED_FORMAT_LABELS: String =
+    AUDIO_EXTENSIONS.values.distinct().joinToString(" · ") { audioFormatLabel(it) }
+
+/** (format label, track count) pairs, most common first; tracks without a known format are skipped. */
+fun formatBreakdown(tracks: List<Track>): List<Pair<String, Int>> =
+    tracks.filter { it.mimeType.isNotBlank() }
+        .groupingBy { audioFormatLabel(it.mimeType) }
+        .eachCount()
+        .toList()
+        .sortedByDescending { it.second }
+
 class MusicRepository(private val context: Context) {
 
     private companion object {
@@ -160,6 +172,7 @@ class MusicRepository(private val context: Context) {
     val savedQueue = queueDao.getSavedQueue()
 
     val topPlayedTracks = trackStatDao.getTopPlayedTracks()
+    val topPlaylists = trackStatDao.getTopPlaylists()
     val mostListenedTracks = trackStatDao.getMostListenedTracks()
     val totalPlays = trackStatDao.getTotalPlays()
     val totalListenTimeMs = trackStatDao.getTotalListenTimeMs()
@@ -179,7 +192,8 @@ class MusicRepository(private val context: Context) {
         }
     }
 
-    suspend fun recordHistory(track: Track) {
+    /** [playlist] names the playlist the song was played from, if any, for playlist stats. */
+    suspend fun recordHistory(track: Track, playlist: String? = null) {
         withContext(Dispatchers.IO) {
             historyDao.addHistory(
                 HistoryEntity(
@@ -201,6 +215,7 @@ class MusicRepository(private val context: Context) {
                 album = track.album,
                 durationMs = track.durationMs
             )
+            playlist?.let { trackStatDao.recordPlaylistPlay(it, track.durationMs) }
         }
     }
 

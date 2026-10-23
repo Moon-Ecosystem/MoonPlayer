@@ -23,9 +23,17 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
+import android.widget.Toast
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.Dp
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.filled.DragHandle
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -44,8 +52,6 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Shuffle
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -91,7 +97,7 @@ import com.example.viewmodel.Screen
 /**
  * Playlist & Queue Screen matching Image 2 (PlaylistQueue_73a31d54.jpeg).
  * Features rich header with album thumbnail, title, play/shuffle pills,
- * numbered tracks with equalizer bars on active song, and bottom mini-player.
+ * numbered tracks with equalizer bars on active song, under a pinned now-playing header.
  */
 @Composable
 fun PlaylistQueueScreen(
@@ -103,13 +109,16 @@ fun PlaylistQueueScreen(
     val currentIndex by viewModel.currentIndex.collectAsState()
     val currentTrack by viewModel.currentTrack.collectAsState()
     val isPlaying by viewModel.isPlaying.collectAsState()
-    val favoriteIds by viewModel.favoriteTrackIds.collectAsState()
+    val isShuffle by viewModel.isShuffleMode.collectAsState()
+    val playingFrom by viewModel.playingFrom.collectAsState()
     val accent = LocalAccentColor.current
 
-    val totalDurationMs = remember(queue) { queue.sumOf { it.durationMs } }
-    val isFavorite = currentTrack?.let { favoriteIds.contains(it.id) } ?: false
-
-    var showOptionsDialog by remember { mutableStateOf(false) }
+    // The list shows what's still to come; songs already played fold away behind a toggle.
+    var showPlayed by remember { mutableStateOf(false) }
+    val upcoming = remember(queue, currentIndex) { queue.drop(currentIndex + 1) }
+    val upcomingDurationMs = remember(upcoming) { upcoming.sumOf { it.durationMs } }
+    val playedCount = currentIndex.coerceAtLeast(0)
+    val context = LocalContext.current
 
     Column(
         modifier = modifier
@@ -131,19 +140,32 @@ fun PlaylistQueueScreen(
                     .minimumInteractiveComponentSize()
             ) {
                 Icon(
-                    imageVector = Icons.Default.ArrowBack,
-                    contentDescription = "Back",
+                    imageVector = Icons.Default.KeyboardArrowDown,
+                    contentDescription = "Back to player",
                     tint = PrimaryText
                 )
             }
 
-            Text(
-                text = "UP NEXT",
-                style = MaterialTheme.typography.labelSmall,
-                color = MutedText,
-                fontFamily = FontFamily.Monospace,
-                letterSpacing = 2.sp
-            )
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(
+                    text = if (playingFrom != null) "PLAYING FROM" else "PLAYING",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MutedText,
+                    fontFamily = FontFamily.Monospace,
+                    letterSpacing = 1.5.sp
+                )
+                Text(
+                    text = playingFrom ?: "Queue",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = accent,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
 
             IconButton(
                 onClick = { viewModel.navigateTo(Screen.LIBRARY) },
@@ -160,6 +182,7 @@ fun PlaylistQueueScreen(
         // Stable per-entry keys ("id#n" for the n-th copy of a song) so a row keeps its key while
         // dragged; the local order moves instantly and each step is mirrored to the player.
         var order by remember(queue) { mutableStateOf(keyedEntries(queue)) }
+        val haptic = LocalHapticFeedback.current
         val listState = rememberLazyListState()
         val reorderState = rememberReorderableLazyListState(listState) { from, to ->
             val fromIndex = order.indexOfFirst { it.first == from.key }
@@ -170,175 +193,140 @@ fun PlaylistQueueScreen(
             }
         }
 
+        // NOW PLAYING: pinned above the list; tap returns to the full player.
+        currentTrack?.let { track ->
+            Surface(
+                onClick = onBack,
+                shape = RoundedCornerShape(14.dp),
+                color = TerminalSurfaceElevated,
+                border = androidx.compose.foundation.BorderStroke(1.dp, TerminalBorder),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp)
+                    .testTag("queue_now_playing")
+            ) {
+                Column {
+                    Row(
+                        modifier = Modifier.padding(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        QueueThumb(track, size = 52.dp)
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "NOW PLAYING",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = accent,
+                                fontFamily = FontFamily.Monospace,
+                                letterSpacing = 1.2.sp
+                            )
+                            Text(
+                                text = track.title,
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = PrimaryText,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = track.artist,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MutedText,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        Surface(
+                            onClick = { viewModel.togglePlayPause() },
+                            shape = CircleShape,
+                            color = accent,
+                            modifier = Modifier
+                                .size(44.dp)
+                                .testTag("queue_play_pause_button")
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                    contentDescription = if (isPlaying) "Pause" else "Play",
+                                    tint = com.example.ui.theme.buttonContentColorFor(accent),
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
+                        }
+                    }
+                    QueueProgressLine(viewModel, accent)
+                }
+            }
+        }
+
+        // UP NEXT heading, with the actions that apply to the whole queue
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 20.dp, end = 12.dp, top = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Up next",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = PrimaryText
+                )
+                Text(
+                    text = "${upcoming.size} songs · ${Track.formatDuration(upcomingDurationMs)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MutedText
+                )
+            }
+            IconButton(
+                onClick = { viewModel.toggleShuffle() },
+                modifier = Modifier.testTag("queue_shuffle_button")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Shuffle,
+                    contentDescription = if (isShuffle) "Shuffle on" else "Shuffle off",
+                    tint = if (isShuffle) accent else MutedText,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+            IconButton(
+                onClick = {
+                    viewModel.saveQueueAsPlaylist()
+                    Toast.makeText(context, "Queue saved as a playlist", Toast.LENGTH_SHORT).show()
+                },
+                enabled = queue.isNotEmpty()
+            ) {
+                Icon(
+                    imageVector = Icons.Default.BookmarkAdd,
+                    contentDescription = "Save queue as playlist",
+                    tint = MutedText,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+        }
+
         LazyColumn(
             state = listState,
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
-                // Swiping down from the top of the queue returns to the song.
-                .overscrollNavigation(onPullDown = { viewModel.navigateTo(Screen.PLAYER) })
                 .padding(horizontal = 20.dp)
         ) {
-            // HEADER SECTION: Album/Queue Thumbnail + Info
-            item {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 10.dp, bottom = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // Album Cover Thumbnail
-                    Box(
+            if (playedCount > 0) {
+                item(key = "played_toggle") {
+                    Text(
+                        text = if (showPlayed) "Hide played songs ▴" else "Show $playedCount played ${if (playedCount == 1) "song" else "songs"} ▾",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MutedText,
                         modifier = Modifier
-                            .size(88.dp)
-                            .shadow(8.dp, RoundedCornerShape(14.dp))
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(TerminalRaisedPanel)
-                            .border(1.dp, TerminalBorder, RoundedCornerShape(14.dp)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Image(
-                            painter = painterResource(id = R.drawable.moon_player_logo_thumb),
-                            contentDescription = null,
-                            modifier = Modifier.size(54.dp)
-                        )
-                        currentTrack?.let {
-                            AsyncImage(
-                                model = it.artModel,
-                                contentDescription = null,
-                                modifier = Modifier.fillMaxSize(),
-                                contentScale = ContentScale.Crop
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.width(16.dp))
-
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Queue · ${queue.size} songs · ${Track.formatDuration(totalDurationMs)}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MutedText
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = (currentTrack?.album ?: "Playback Queue").take(22),
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = PrimaryText,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = currentTrack?.artist ?: "Moon Player Audio Engine",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = accent,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        // Actions Row (Add to playlist, Save, Options)
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            currentTrack?.let { trk ->
-                                IconButton(
-                                    onClick = { viewModel.setTrackToAddToPlaylist(trk) },
-                                    modifier = Modifier.size(32.dp).minimumInteractiveComponentSize()
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.PlaylistAdd,
-                                        contentDescription = "Add to playlist",
-                                        tint = SecondaryText,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                            }
-                            IconButton(
-                                onClick = {
-                                    if (queue.isNotEmpty()) {
-                                        viewModel.createPlaylist("Saved Queue " + (System.currentTimeMillis() % 1000))
-                                    }
-                                },
-                                modifier = Modifier.size(32.dp).minimumInteractiveComponentSize()
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.BookmarkAdd,
-                                    contentDescription = "Save Queue as Playlist",
-                                    tint = SecondaryText,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        }
-                    }
+                            .clickable { showPlayed = !showPlayed }
+                            .padding(vertical = 10.dp)
+                    )
                 }
             }
 
-            // DUAL PILL BUTTONS: PLAY & SHUFFLE (Matches Image 2)
-            item {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 20.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Button(
-                        onClick = { viewModel.togglePlayPause() },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = accent,
-                            contentColor = com.example.ui.theme.buttonContentColorFor(accent)
-                        ),
-                        shape = RoundedCornerShape(24.dp),
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(46.dp)
-                            .testTag("queue_play_pill_button")
-                    ) {
-                        Icon(
-                            imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                            contentDescription = null,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = if (isPlaying) "Pause" else "Play",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp
-                        )
-                    }
-
-                    OutlinedButton(
-                        onClick = { viewModel.toggleShuffle() },
-                        shape = RoundedCornerShape(24.dp),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, TerminalBorder),
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            containerColor = TerminalRaisedPanel,
-                            contentColor = PrimaryText
-                        ),
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(46.dp)
-                            .testTag("queue_shuffle_pill_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Shuffle,
-                            contentDescription = null,
-                            tint = accent,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Shuffle",
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 15.sp
-                        )
-                    }
-                }
-            }
-
-            // NUMBERED QUEUE TRACK LIST
-            if (order.isEmpty()) {
+            if (upcoming.isEmpty() && !showPlayed) {
                 item {
                     Box(
                         modifier = Modifier
@@ -347,140 +335,98 @@ fun PlaylistQueueScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = "> QUEUE IS CURRENTLY EMPTY",
+                            text = if (queue.isEmpty()) "> QUEUE IS EMPTY" else "> NOTHING AFTER THIS SONG",
                             style = MaterialTheme.typography.labelMedium,
                             color = MutedText
                         )
                     }
                 }
-            } else {
-                itemsIndexed(order, key = { _, entry -> entry.first }) { index, (key, track) ->
-                    ReorderableItem(reorderState, key = key) { isDragging ->
+            }
+            // The current song is in the card above; positions stay those of the whole queue.
+            val visible = order.withIndex().filter { (i, _) -> i > currentIndex || (showPlayed && i < currentIndex) }
+            items(visible, key = { it.value.first }) { (index, entry) ->
+                val (key, track) = entry
+                ReorderableItem(reorderState, key = key) { isDragging ->
                         val isCurrent = index == currentIndex
                         NumberedQueueTrackRow(
                             track = track,
                             index = index + 1,
                             isCurrent = isCurrent,
                             isPlaying = isCurrent && isPlaying,
+                            isPlayed = index < currentIndex,
                             isDragging = isDragging,
                             accentColor = accent,
-                            dragHandle = Modifier.draggableHandle(),
+                            // Long-press first, so a scroll that starts on the handle stays a scroll.
+                            dragHandle = Modifier.longPressDraggableHandle(
+                                onDragStarted = { haptic.performHapticFeedback(HapticFeedbackType.LongPress) }
+                            ),
                             onPlay = { viewModel.skipToQueueIndex(index) },
+                            onPlayNext = playNextTarget(index, currentIndex)?.let { target ->
+                                { viewModel.moveQueueItem(index, target) }
+                            },
                             onAddToPlaylist = { viewModel.setTrackToAddToPlaylist(track) },
                             onRemove = { viewModel.removeFromQueue(index) }
                         )
-                    }
                 }
             }
 
             item {
-                Spacer(modifier = Modifier.height(80.dp)) // padding for bottom docked mini-player
-            }
-        }
-
-        // BOTTOM DOCKED MINI-PLAYER BAR (Matches Image 2 bottom bar)
-        currentTrack?.let { track ->
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 14.dp, vertical = 10.dp)
-                    .clickable { viewModel.navigateTo(Screen.PLAYER) }
-                    .testTag("docked_mini_player"),
-                shape = RoundedCornerShape(28.dp),
-                color = TerminalRaisedPanel,
-                tonalElevation = 10.dp,
-                border = androidx.compose.foundation.BorderStroke(1.dp, TerminalBorder)
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        // Mini album circle
-                        Box(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(CircleShape)
-                                .background(TerminalBlack)
-                                .border(1.dp, TerminalBorder, CircleShape),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Image(
-                                painter = painterResource(id = R.drawable.moon_player_logo_thumb),
-                                contentDescription = null,
-                                modifier = Modifier.size(24.dp)
-                            )
-                            AsyncImage(
-                                model = track.artModel,
-                                contentDescription = null,
-                                modifier = Modifier.fillMaxSize(),
-                                contentScale = ContentScale.Crop
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.width(12.dp))
-
-                        Column {
-                            Text(
-                                text = track.title,
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = PrimaryText,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                text = track.artist,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MutedText,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(
-                            onClick = { viewModel.toggleFavorite(track.id) },
-                            modifier = Modifier.size(36.dp).minimumInteractiveComponentSize()
-                        ) {
-                            Icon(
-                                imageVector = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                                contentDescription = "Favorite",
-                                tint = if (isFavorite) accent else MutedText,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.width(6.dp))
-
-                        Surface(
-                            shape = CircleShape,
-                            color = accent,
-                            modifier = Modifier
-                                .size(38.dp)
-                                .clickable { viewModel.togglePlayPause() }
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                    contentDescription = if (isPlaying) "Pause" else "Play",
-                                    tint = TerminalBlack,
-                                    modifier = Modifier.size(22.dp)
-                                )
-                            }
-                        }
-                    }
-                }
+                Spacer(modifier = Modifier.height(16.dp))
             }
         }
     }
+}
+
+/**
+ * Queue position that puts the song at [from] right after the current one, or null when it is
+ * the current song or already next. Moving an earlier song shifts the current one up by one.
+ */
+internal fun playNextTarget(from: Int, current: Int): Int? = when {
+    current < 0 || from == current || from == current + 1 -> null
+    from > current -> current + 1
+    else -> current
+}
+
+/** Rounded cover thumbnail with the app logo underneath for songs without art. */
+@Composable
+private fun QueueThumb(track: Track, size: Dp) {
+    Box(
+        modifier = Modifier
+            .size(size)
+            .clip(RoundedCornerShape(8.dp))
+            .background(TerminalRaisedPanel)
+            .border(1.dp, TerminalBorder, RoundedCornerShape(8.dp)),
+        contentAlignment = Alignment.Center
+    ) {
+        Image(
+            painter = painterResource(id = R.drawable.moon_player_logo_thumb),
+            contentDescription = null,
+            modifier = Modifier.size(size * 0.6f)
+        )
+        AsyncImage(
+            model = track.artModel,
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize()
+        )
+    }
+}
+
+// Reads position only inside the progress lambda, so ticks redraw the line, not the screen.
+@Composable
+private fun QueueProgressLine(viewModel: MainViewModel, accent: androidx.compose.ui.graphics.Color) {
+    val position = viewModel.currentPositionMs.collectAsState()
+    val duration = viewModel.durationMs.collectAsState()
+    LinearProgressIndicator(
+        progress = {
+            val d = duration.value
+            if (d > 0) (position.value.toFloat() / d).coerceIn(0f, 1f) else 0f
+        },
+        color = accent,
+        trackColor = TerminalBorder,
+        drawStopIndicator = {},
+        modifier = Modifier.fillMaxWidth().height(2.dp)
+    )
 }
 
 @Composable
@@ -493,6 +439,8 @@ fun NumberedQueueTrackRow(
     onPlay: () -> Unit,
     onAddToPlaylist: () -> Unit,
     onRemove: () -> Unit,
+    onPlayNext: (() -> Unit)? = null,
+    isPlayed: Boolean = false,
     isDragging: Boolean = false,
     dragHandle: Modifier? = null
 ) {
@@ -505,13 +453,15 @@ fun NumberedQueueTrackRow(
         border = if (isCurrent) androidx.compose.foundation.BorderStroke(1.dp, accentColor.copy(alpha = 0.5f)) else null,
         modifier = Modifier
             .fillMaxWidth()
+            // Already-played songs are dimmed so the upcoming ones read first.
+            .alpha(if (isPlayed) 0.55f else 1f)
             .clickable { onPlay() }
             .padding(vertical = 2.dp)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 12.dp),
+                .padding(horizontal = 4.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
@@ -519,20 +469,14 @@ fun NumberedQueueTrackRow(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.weight(1f)
             ) {
-                // Number or Equalizer Waves
+                // Cover thumbnail, or equalizer bars on the playing song
                 if (isCurrent && isPlaying) {
-                    EqualizerWaveIndicator(accentColor = accentColor, modifier = Modifier.width(28.dp))
+                    EqualizerWaveIndicator(accentColor = accentColor, modifier = Modifier.width(44.dp))
                 } else {
-                    Text(
-                        text = String.format("%02d", index),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = if (isCurrent) accentColor else MutedText,
-                        fontFamily = FontFamily.Monospace,
-                        modifier = Modifier.width(28.dp)
-                    )
+                    QueueThumb(track, size = 44.dp)
                 }
 
-                Spacer(modifier = Modifier.width(10.dp))
+                Spacer(modifier = Modifier.width(12.dp))
 
                 Column {
                     Text(
@@ -587,6 +531,15 @@ fun NumberedQueueTrackRow(
                             onPlay()
                         }
                     )
+                    onPlayNext?.let { playNext ->
+                        DropdownMenuItem(
+                            text = { Text("Play Next", color = PrimaryText) },
+                            onClick = {
+                                showMenu = false
+                                playNext()
+                            }
+                        )
+                    }
                     DropdownMenuItem(
                         text = { Text("Add to Playlist", color = PrimaryText) },
                         onClick = {

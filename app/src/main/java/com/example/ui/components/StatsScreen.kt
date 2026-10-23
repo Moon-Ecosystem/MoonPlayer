@@ -41,11 +41,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.db.TrackStatEntity
 import com.example.data.model.Track
+import com.example.data.repository.formatBreakdown
 import com.example.ui.theme.LocalAccentColor
 import com.example.ui.theme.MutedText
 import com.example.ui.theme.PrimaryText
@@ -63,6 +65,7 @@ fun StatsScreen(
     modifier: Modifier = Modifier
 ) {
     val topTracks by viewModel.topPlayedTracks.collectAsState()
+    val topPlaylists by viewModel.topPlaylists.collectAsState()
     val totalPlays by viewModel.totalPlays.collectAsState()
     val totalListenTimeMs by viewModel.totalListenTimeMs.collectAsState()
     val allTracks by viewModel.allTracks.collectAsState()
@@ -257,33 +260,89 @@ fun StatsScreen(
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // HARDWARE / CODEC PROFILE
-        Text(
-            text = "AUDIO ENGINE PROFILE",
-            style = MaterialTheme.typography.labelSmall,
-            color = MutedText,
-            fontFamily = FontFamily.Monospace,
-            letterSpacing = 1.2.sp
-        )
+        if (topPlaylists.isNotEmpty()) {
+            Text(
+                text = "TOP PLAYLISTS",
+                style = MaterialTheme.typography.labelSmall,
+                color = MutedText,
+                fontFamily = FontFamily.Monospace,
+                letterSpacing = 1.2.sp
+            )
 
-        Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
-        Surface(
-            shape = RoundedCornerShape(8.dp),
-            color = TerminalRaisedPanel,
-            border = androidx.compose.foundation.BorderStroke(1.dp, TerminalBorder),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                ProfileTelemetryRow("Engine Architecture", "AndroidX Media3 ExoPlayer")
-                ProfileTelemetryRow("Supported Formats", "MP3 · FLAC · M4A · AAC · OGG · Opus · WAV")
-                ProfileTelemetryRow("Digital Signal Processor", "Android Hardware AudioFX Equalizer")
-                ProfileTelemetryRow("Privacy Architecture", "100% Local / Zero Cloud Leakage")
-                ProfileTelemetryRow("Sample Rate", "44,100 Hz Hi-Fi Stereo")
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = TerminalRaisedPanel,
+                border = androidx.compose.foundation.BorderStroke(1.dp, TerminalBorder),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    topPlaylists.forEachIndexed { index, stat ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = String.format("#%02d", index + 1),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (index == 0) accent else MutedText,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.width(34.dp)
+                            )
+                            Text(
+                                text = stat.name,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = PrimaryText,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f).padding(end = 8.dp)
+                            )
+                            Text(
+                                text = "${stat.playCount} plays · ${Track.formatDuration(stat.totalTimeMs)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = accent,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
+                    }
+                }
             }
+
+            Spacer(modifier = Modifier.height(24.dp))
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
+        val formats = remember(allTracks) { formatBreakdown(allTracks) }
+        if (formats.isNotEmpty()) {
+            Text(
+                text = "LIBRARY BY FORMAT",
+                style = MaterialTheme.typography.labelSmall,
+                color = MutedText,
+                fontFamily = FontFamily.Monospace,
+                letterSpacing = 1.2.sp
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = TerminalRaisedPanel,
+                border = androidx.compose.foundation.BorderStroke(1.dp, TerminalBorder),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    formats.forEach { (format, count) ->
+                        ProfileTelemetryRow(format, if (count == 1) "1 track" else "$count tracks")
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+        }
     }
 }
 
@@ -326,15 +385,27 @@ private fun StatMetricCard(
     }
 }
 
+/** Label on the left, value right-aligned; a long value wraps instead of running into the label. */
 @Composable
-private fun ProfileTelemetryRow(label: String, value: String) {
+internal fun ProfileTelemetryRow(label: String, value: String) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
-        horizontalArrangement = Arrangement.SpaceBetween
+            .padding(vertical = 4.dp)
     ) {
-        Text(text = label, style = MaterialTheme.typography.bodySmall, color = SecondaryText)
-        Text(text = value, style = MaterialTheme.typography.labelSmall, color = PrimaryText, fontFamily = FontFamily.Monospace)
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = SecondaryText,
+            modifier = Modifier.padding(end = 12.dp)
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.labelSmall,
+            color = PrimaryText,
+            fontFamily = FontFamily.Monospace,
+            textAlign = TextAlign.End,
+            modifier = Modifier.weight(1f)
+        )
     }
 }

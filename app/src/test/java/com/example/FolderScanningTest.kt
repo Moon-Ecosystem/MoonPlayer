@@ -1,7 +1,9 @@
 package com.example
 
+import com.example.data.repository.SUPPORTED_FORMAT_LABELS
 import com.example.data.repository.audioFormatLabel
 import com.example.data.repository.folderNameFromTreeUri
+import com.example.data.repository.formatBreakdown
 import com.example.data.repository.isTrackInFolder
 import com.example.data.repository.supportedAudioMime
 import org.junit.Assert.assertEquals
@@ -58,6 +60,14 @@ class FolderScanningTest {
         assertEquals("MP3", audioFormatLabel("audio/mpeg"))
         assertEquals("FLAC", audioFormatLabel("audio/flac"))
         assertEquals("M4A", audioFormatLabel("audio/mp4"))
+    }
+
+    @Test
+    fun `library format breakdown counts known formats, most common first`() {
+        fun t(mime: String) = com.example.data.model.Track("id", "uri", "t", "a", "al", 0L, mimeType = mime)
+        val tracks = listOf(t("audio/flac"), t("audio/mpeg"), t("audio/mpeg"), t(""))
+        assertEquals(listOf("MP3" to 2, "FLAC" to 1), formatBreakdown(tracks))
+        assertTrue(SUPPORTED_FORMAT_LABELS.startsWith("MP3 · FLAC"))
     }
 
     @Test

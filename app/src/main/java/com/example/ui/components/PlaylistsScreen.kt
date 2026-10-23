@@ -18,6 +18,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.filled.DragHandle
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
 import androidx.activity.compose.BackHandler
@@ -255,7 +257,7 @@ fun PlaylistsScreen(
                                     )
                                 }
                                 IconButton(
-                                    onClick = { viewModel.playTrackList(tracks, 0, source = name) },
+                                    onClick = { viewModel.playTrackList(tracks, 0, source = name, isPlaylist = true) },
                                     enabled = tracks.isNotEmpty(),
                                     modifier = Modifier.minimumInteractiveComponentSize()
                                 ) {
@@ -507,6 +509,7 @@ fun PlaylistDetailScreen(
 
     // Moves instantly while dragging; the order is saved once when the drag ends.
     var playlistTracks by remember(savedTracks) { mutableStateOf(savedTracks) }
+    val haptic = LocalHapticFeedback.current
     val listState = rememberLazyListState()
     val reorderState = rememberReorderableLazyListState(listState) { from, to ->
         val fromIndex = playlistTracks.indexOfFirst { it.id == from.key }
@@ -567,7 +570,7 @@ fun PlaylistDetailScreen(
             if (trackList.isNotEmpty()) {
                 Button(
                     onClick = {
-                        viewModel.playTrackList(trackList, 0, source = playlist.name)
+                        viewModel.playTrackList(trackList, 0, source = playlist.name, isPlaylist = true)
                         viewModel.navigateTo(Screen.PLAYER)
                     },
                     colors = ButtonDefaults.buttonColors(
@@ -617,7 +620,7 @@ fun PlaylistDetailScreen(
                             .fillMaxWidth()
                             .clickable {
                                 val idx = playlistTracks.indexOf(pt)
-                                viewModel.playTrackList(trackList, idx.coerceAtLeast(0), source = playlist.name)
+                                viewModel.playTrackList(trackList, idx.coerceAtLeast(0), source = playlist.name, isPlaylist = true)
                                 viewModel.navigateTo(Screen.PLAYER)
                             }
                     ) {
@@ -661,7 +664,9 @@ fun PlaylistDetailScreen(
                                 contentDescription = "Drag to reorder",
                                 tint = MutedText,
                                 modifier = Modifier
-                                    .draggableHandle(
+                                    // Long-press first, so a scroll that starts on the handle stays a scroll.
+                                    .longPressDraggableHandle(
+                                        onDragStarted = { haptic.performHapticFeedback(HapticFeedbackType.LongPress) },
                                         onDragStopped = {
                                             viewModel.reorderPlaylist(playlistTracks.map { it.id })
                                         }

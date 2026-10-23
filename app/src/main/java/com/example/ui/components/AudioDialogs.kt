@@ -26,7 +26,6 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -47,7 +46,6 @@ import com.example.ui.theme.LocalAccentColor
 import com.example.ui.theme.MutedText
 import com.example.ui.theme.PrimaryText
 import com.example.ui.theme.SecondaryText
-import com.example.ui.theme.TerminalBlack
 import com.example.ui.theme.TerminalBorder
 import com.example.ui.theme.TerminalRaisedPanel
 import com.example.ui.theme.TerminalSurfaceElevated
@@ -89,11 +87,7 @@ fun EqualizerDialog(
                 Switch(
                     checked = settings.equalizerEnabled,
                     onCheckedChange = { viewModel.setEqualizerEnabled(it) },
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = TerminalBlack,
-                        checkedTrackColor = accent,
-                        uncheckedTrackColor = TerminalBorder
-                    )
+                    colors = moonSwitchColors(accent)
                 )
             }
         },

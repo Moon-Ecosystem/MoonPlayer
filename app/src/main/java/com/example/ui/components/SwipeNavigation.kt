@@ -1,63 +1,56 @@
 package com.example.ui.components
 
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.pager.PagerDefaults
+import androidx.compose.foundation.pager.VerticalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
-import androidx.compose.ui.input.nestedscroll.NestedScrollSource
-import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.Velocity
-import androidx.compose.ui.unit.dp
+import com.example.viewmodel.MainViewModel
+import com.example.viewmodel.Screen
 
 /**
- * Turns a drag that runs past the end of the scrollable content below this modifier into
- * navigation: pulling up past the bottom calls [onPullUp], pulling down past the top calls
- * [onPullDown]. Normal scrolling is untouched because only the leftover (unconsumed) drag counts.
+ * The player with the queue directly below it, as two pages that follow the finger: swipe up
+ * for the queue, down to return. Lists nest inside the pager, so the queue scrolls first and
+ * only a pull down from its top moves back to the player.
  */
 @Composable
-fun Modifier.overscrollNavigation(
-    onPullUp: (() -> Unit)? = null,
-    onPullDown: (() -> Unit)? = null,
-    threshold: Dp = 56.dp
-): Modifier {
-    val thresholdPx = with(LocalDensity.current) { threshold.toPx() }
-    // Read the latest callbacks without recreating the connection (and losing the pull) mid-drag.
-    val pullUp by rememberUpdatedState(onPullUp)
-    val pullDown by rememberUpdatedState(onPullDown)
-    val connection = remember(thresholdPx) {
-        object : NestedScrollConnection {
-            var leftover = 0f
+fun PlayerQueuePager(
+    viewModel: MainViewModel,
+    currentScreen: Screen,
+    onOpenDrawer: () -> Unit
+) {
+    val queuePage = 1
+    val pagerState = rememberPagerState(
+        initialPage = if (currentScreen == Screen.QUEUE) queuePage else 0
+    ) { 2 }
 
-            override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
-                val handled = (available.y < 0 && pullUp != null) || (available.y > 0 && pullDown != null)
-                if (!handled) return Offset.Zero
-                leftover += available.y
-                // Claim it: otherwise Android's stretch overscroll starts on the first frame and
-                // swallows the rest of the drag before it reaches us.
-                return Offset(0f, available.y)
-            }
-
-            // The drag has ended here; fling scrolling that follows is discarded in onPostFling.
-            override suspend fun onPreFling(available: Velocity): Velocity {
-                val pulled = leftover
-                leftover = 0f
-                when {
-                    pulled < -thresholdPx -> pullUp?.invoke()
-                    pulled > thresholdPx -> pullDown?.invoke()
-                }
-                return Velocity.Zero
-            }
-
-            override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
-                leftover = 0f
-                return Velocity.Zero
-            }
+    // Buttons, Back and the drawer change the screen: move the pager to match.
+    LaunchedEffect(currentScreen) {
+        val target = if (currentScreen == Screen.QUEUE) queuePage else 0
+        if (pagerState.currentPage != target) pagerState.animateScrollToPage(target)
+    }
+    // A finished swipe changes the page: record it as the current screen.
+    LaunchedEffect(pagerState) {
+        snapshotFlow { pagerState.settledPage }.collect { page ->
+            viewModel.navigateTo(if (page == queuePage) Screen.QUEUE else Screen.PLAYER)
         }
     }
-    return nestedScroll(connection)
+
+    VerticalPager(
+        state = pagerState,
+        // Keep the other page composed so the first swipe doesn't stutter while it builds.
+        beyondViewportPageCount = 1,
+        // A short drag (a tenth of the screen) is enough to switch; the default needs half.
+        flingBehavior = PagerDefaults.flingBehavior(state = pagerState, snapPositionalThreshold = 0.1f),
+        modifier = Modifier.fillMaxSize()
+    ) { page ->
+        if (page == queuePage) {
+            PlaylistQueueScreen(viewModel = viewModel, onBack = { viewModel.navigateTo(Screen.PLAYER) })
+        } else {
+            MainPlayerScreen(viewModel = viewModel, onOpenDrawer = onOpenDrawer)
+        }
+    }
 }

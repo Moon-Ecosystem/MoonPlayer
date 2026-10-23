@@ -21,7 +21,8 @@ enum class AccentMode {
     WARM_IVORY,
     TERMINAL_GREEN,
     AMBER_GLOW,
-    CYAN_PULSE
+    CYAN_PULSE,
+    SYSTEM // Android 12+ wallpaper (Material You) accent
 }
 
 data class PlayerSettings(
