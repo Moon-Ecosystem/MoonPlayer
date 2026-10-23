@@ -267,6 +267,8 @@ class PlaybackService : MediaSessionService() {
             currentQ.removeAt(index)
             _queue.value = currentQ
             player.removeMediaItem(index)
+            // Removing an earlier song shifts the playing one without a media-item transition.
+            _currentIndex.value = player.currentMediaItemIndex
         }
     }
 
@@ -277,6 +279,8 @@ class PlaybackService : MediaSessionService() {
             currentQ.add(to, item)
             _queue.value = currentQ
             player.moveMediaItem(from, to)
+            // The playing song keeps playing but may now sit at a different position.
+            _currentIndex.value = player.currentMediaItemIndex
         }
     }
 

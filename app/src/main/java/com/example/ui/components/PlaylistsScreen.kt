@@ -16,6 +16,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.filled.DragHandle
+import sh.calvin.reorderable.ReorderableItem
+import sh.calvin.reorderable.rememberReorderableLazyListState
 import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -498,8 +502,19 @@ fun PlaylistDetailScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val playlistTracks by viewModel.playlistTracks.collectAsState()
+    val savedTracks by viewModel.playlistTracks.collectAsState()
     val accent = LocalAccentColor.current
+
+    // Moves instantly while dragging; the order is saved once when the drag ends.
+    var playlistTracks by remember(savedTracks) { mutableStateOf(savedTracks) }
+    val listState = rememberLazyListState()
+    val reorderState = rememberReorderableLazyListState(listState) { from, to ->
+        val fromIndex = playlistTracks.indexOfFirst { it.id == from.key }
+        val toIndex = playlistTracks.indexOfFirst { it.id == to.key }
+        if (fromIndex >= 0 && toIndex >= 0) {
+            playlistTracks = playlistTracks.toMutableList().apply { add(toIndex, removeAt(fromIndex)) }
+        }
+    }
 
     val trackList = remember(playlistTracks) {
         playlistTracks.map { pt ->
@@ -585,15 +600,18 @@ fun PlaylistDetailScreen(
             }
         } else {
             LazyColumn(
+                state = listState,
                 modifier = Modifier
                     .fillMaxSize()
                     .weight(1f),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(playlistTracks, key = { it.id }) { pt ->
+                  ReorderableItem(reorderState, key = pt.id) { isDragging ->
                     Surface(
                         shape = RoundedCornerShape(8.dp),
-                        color = TerminalRaisedPanel,
+                        color = if (isDragging) TerminalSurfaceElevated else TerminalRaisedPanel,
+                        shadowElevation = if (isDragging) 8.dp else 0.dp,
                         border = androidx.compose.foundation.BorderStroke(1.dp, TerminalBorder),
                         modifier = Modifier
                             .fillMaxWidth()
@@ -637,8 +655,23 @@ fun PlaylistDetailScreen(
                                     modifier = Modifier.size(18.dp)
                                 )
                             }
+
+                            Icon(
+                                imageVector = Icons.Default.DragHandle,
+                                contentDescription = "Drag to reorder",
+                                tint = MutedText,
+                                modifier = Modifier
+                                    .draggableHandle(
+                                        onDragStopped = {
+                                            viewModel.reorderPlaylist(playlistTracks.map { it.id })
+                                        }
+                                    )
+                                    .size(40.dp)
+                                    .padding(8.dp)
+                            )
                         }
                     }
+                  }
                 }
             }
         }
