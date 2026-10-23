@@ -1,6 +1,6 @@
 # 🌙 Moon Player
 
-An offline MP3 player with a terminal-inspired aesthetic, turntable visualizer, queue management, listening statistics, and folder linking.
+An offline music player (MP3, FLAC, M4A/AAC, OGG/Opus, WAV) with a terminal-inspired aesthetic, turntable visualizer, queue management, listening statistics, and folder linking.
 
 ---
 

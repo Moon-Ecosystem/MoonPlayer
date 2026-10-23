@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -36,7 +37,9 @@ data class PlayerSettings(
     val equalizerEnabled: Boolean = true,
     val equalizerPreset: String = "Flat",
     val equalizerBands: String = "0,0,0,0,0",
-    val bassBoostStrength: Int = 300
+    val bassBoostStrength: Int = 300,
+    val libraryFolderUris: Set<String> = emptySet(),
+    val onboardingComplete: Boolean = false
 )
 
 class SettingsManager(private val context: Context) {
@@ -54,6 +57,8 @@ class SettingsManager(private val context: Context) {
         val KEY_EQ_PRESET = stringPreferencesKey("eq_preset")
         val KEY_EQ_BANDS = stringPreferencesKey("eq_bands")
         val KEY_BASS_BOOST = intPreferencesKey("bass_boost")
+        val KEY_LIBRARY_FOLDER_URIS = stringSetPreferencesKey("library_folder_uris")
+        val KEY_ONBOARDING_COMPLETE = booleanPreferencesKey("onboarding_complete")
     }
 
     val settingsFlow: Flow<PlayerSettings> = context.dataStore.data.map { prefs ->
@@ -77,7 +82,9 @@ class SettingsManager(private val context: Context) {
             equalizerEnabled = prefs[KEY_EQ_ENABLED] ?: true,
             equalizerPreset = prefs[KEY_EQ_PRESET] ?: "Flat",
             equalizerBands = prefs[KEY_EQ_BANDS] ?: "0,0,0,0,0",
-            bassBoostStrength = prefs[KEY_BASS_BOOST] ?: 300
+            bassBoostStrength = prefs[KEY_BASS_BOOST] ?: 300,
+            libraryFolderUris = prefs[KEY_LIBRARY_FOLDER_URIS] ?: emptySet(),
+            onboardingComplete = prefs[KEY_ONBOARDING_COMPLETE] ?: false
         )
     }
 
@@ -130,5 +137,13 @@ class SettingsManager(private val context: Context) {
 
     suspend fun setBassBoostStrength(strength: Int) {
         context.dataStore.edit { it[KEY_BASS_BOOST] = strength }
+    }
+
+    suspend fun setLibraryFolders(uris: Set<String>) {
+        context.dataStore.edit { it[KEY_LIBRARY_FOLDER_URIS] = uris }
+    }
+
+    suspend fun setOnboardingComplete() {
+        context.dataStore.edit { it[KEY_ONBOARDING_COMPLETE] = true }
     }
 }

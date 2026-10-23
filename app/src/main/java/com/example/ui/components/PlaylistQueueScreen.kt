@@ -70,6 +70,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.example.data.artModel
 import com.example.R
 import com.example.data.model.Track
 import com.example.ui.theme.LocalAccentColor
@@ -156,6 +157,8 @@ fun PlaylistQueueScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
+                // Swiping down from the top of the queue returns to the song.
+                .overscrollNavigation(onPullDown = { viewModel.navigateTo(Screen.PLAYER) })
                 .padding(horizontal = 20.dp)
         ) {
             // HEADER SECTION: Album/Queue Thumbnail + Info
@@ -176,19 +179,17 @@ fun PlaylistQueueScreen(
                             .border(1.dp, TerminalBorder, RoundedCornerShape(14.dp)),
                         contentAlignment = Alignment.Center
                     ) {
-                        if (currentTrack?.albumArtUri != null) {
+                        Image(
+                            painter = painterResource(id = R.drawable.moon_player_logo_thumb),
+                            contentDescription = null,
+                            modifier = Modifier.size(54.dp)
+                        )
+                        currentTrack?.let {
                             AsyncImage(
-                                model = currentTrack!!.albumArtUri,
+                                model = it.artModel,
                                 contentDescription = null,
                                 modifier = Modifier.fillMaxSize(),
-                                contentScale = ContentScale.Crop,
-                                error = painterResource(id = R.drawable.moon_player_logo)
-                            )
-                        } else {
-                            Image(
-                                painter = painterResource(id = R.drawable.moon_player_logo),
-                                contentDescription = null,
-                                modifier = Modifier.size(54.dp)
+                                contentScale = ContentScale.Crop
                             )
                         }
                     }
@@ -388,21 +389,17 @@ fun PlaylistQueueScreen(
                                 .border(1.dp, TerminalBorder, CircleShape),
                             contentAlignment = Alignment.Center
                         ) {
-                            if (track.albumArtUri != null) {
-                                AsyncImage(
-                                    model = track.albumArtUri,
-                                    contentDescription = null,
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentScale = ContentScale.Crop,
-                                    error = painterResource(id = R.drawable.moon_player_logo)
-                                )
-                            } else {
-                                Image(
-                                    painter = painterResource(id = R.drawable.moon_player_logo),
-                                    contentDescription = null,
-                                    modifier = Modifier.size(24.dp)
-                                )
-                            }
+                            Image(
+                                painter = painterResource(id = R.drawable.moon_player_logo_thumb),
+                                contentDescription = null,
+                                modifier = Modifier.size(24.dp)
+                            )
+                            AsyncImage(
+                                model = track.artModel,
+                                contentDescription = null,
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Crop
+                            )
                         }
 
                         Spacer(modifier = Modifier.width(12.dp))

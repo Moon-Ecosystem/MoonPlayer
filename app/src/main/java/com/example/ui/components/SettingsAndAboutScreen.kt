@@ -22,6 +22,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -29,6 +31,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -60,6 +63,7 @@ import com.example.ui.theme.TerminalGreen
 import com.example.ui.theme.TerminalRaisedPanel
 import com.example.ui.theme.TerminalSurfaceElevated
 import com.example.ui.theme.WarmIvory
+import com.example.data.repository.folderNameFromTreeUri
 import com.example.viewmodel.MainViewModel
 
 @Composable
@@ -69,7 +73,12 @@ fun SettingsScreen(
     modifier: Modifier = Modifier
 ) {
     val settings by viewModel.settings.collectAsState()
+    val libraryFolders by viewModel.libraryFolders.collectAsState()
+    val folderAccessError by viewModel.folderAccessError.collectAsState()
     val accent = LocalAccentColor.current
+    val pickFolder = rememberFolderPicker { uri, flags ->
+        viewModel.addFolder(uri, flags)
+    }
 
     Column(
         modifier = modifier
@@ -216,28 +225,79 @@ fun SettingsScreen(
         ) {
             Column(modifier = Modifier.padding(14.dp)) {
                 Text(
-                    text = "Rescan MP3 Library",
+                    text = "Music Folders",
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = PrimaryText
                 )
                 Spacer(modifier = Modifier.height(4.dp))
+                if (libraryFolders.isEmpty()) {
+                    Text(
+                        text = "No folder selected. Add the folders Moon Player may read.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MutedText
+                    )
+                }
+                libraryFolders.forEach { folder ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Folder,
+                            contentDescription = null,
+                            tint = MutedText,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = folderNameFromTreeUri(folder),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = PrimaryText,
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(onClick = { viewModel.removeFolder(folder) }) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Remove ${folderNameFromTreeUri(folder)}",
+                                tint = MutedText,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "Refreshes device MediaStore and scans for new or updated MP3 files.",
+                    text = "Only music files (MP3, FLAC, M4A, AAC, OGG, Opus, WAV) in these folders and their subfolders are scanned. Access is kept across restarts while Android keeps the grant.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MutedText
                 )
-                Spacer(modifier = Modifier.height(10.dp))
-                Button(
-                    onClick = { viewModel.scanAudio() },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = accent,
-                        contentColor = com.example.ui.theme.buttonContentColorFor(accent)
+                folderAccessError?.let { error ->
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = error,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
                     )
-                ) {
-                    Icon(imageVector = Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Rescan Now", fontWeight = FontWeight.Bold)
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = pickFolder,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = accent,
+                            contentColor = com.example.ui.theme.buttonContentColorFor(accent)
+                        )
+                    ) {
+                        Icon(imageVector = Icons.Default.Folder, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Add Folder", fontWeight = FontWeight.Bold)
+                    }
+                    OutlinedButton(
+                        onClick = { viewModel.rescanLibrary() },
+                        enabled = libraryFolders.isNotEmpty()
+                    ) {
+                        Icon(imageVector = Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Rescan")
+                    }
                 }
             }
         }
@@ -315,7 +375,7 @@ fun AboutScreen(
             )
 
             Text(
-                text = "Minimalist Terminal MP3 Engine",
+                text = "Minimalist Terminal Audio Engine",
                 style = MaterialTheme.typography.bodyMedium,
                 color = SecondaryText
             )

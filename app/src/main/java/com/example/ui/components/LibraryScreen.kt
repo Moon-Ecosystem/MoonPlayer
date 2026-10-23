@@ -38,6 +38,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
@@ -61,6 +62,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.example.data.artModel
 import com.example.R
 import com.example.data.model.Track
 import com.example.ui.theme.LocalAccentColor
@@ -87,12 +89,19 @@ fun LibraryScreen(
     val filteredTracks by viewModel.filteredTracks.collectAsState()
     val currentTrack by viewModel.currentTrack.collectAsState()
     val isPlaying by viewModel.isPlaying.collectAsState()
-    val favoriteIds by viewModel.favoriteTrackIds.collectAsState()
+    val favoriteIdList by viewModel.favoriteTrackIds.collectAsState()
+    // Set lookup per row instead of scanning the favourites list for every visible item
+    val favoriteIds = remember(favoriteIdList) { favoriteIdList.toHashSet() }
     val searchQuery by viewModel.searchQuery.collectAsState()
     val sortOrder by viewModel.sortOrder.collectAsState()
+    val selectedFolderName by viewModel.selectedFolderName.collectAsState()
+    val folderAccessError by viewModel.folderAccessError.collectAsState()
     val accent = LocalAccentColor.current
 
     val tracks = tracksOverride ?: filteredTracks
+    val pickFolder = rememberFolderPicker { uri, flags ->
+        viewModel.addFolder(uri, flags)
+    }
 
     var showSortMenu by remember { mutableStateOf(false) }
 
@@ -130,7 +139,7 @@ fun LibraryScreen(
                         color = PrimaryText
                     )
                     Text(
-                        text = "[ ${tracks.size} MP3 FILES ]",
+                        text = "[ ${tracks.size} TRACKS ]",
                         style = MaterialTheme.typography.labelSmall,
                         color = MutedText,
                         fontFamily = FontFamily.Monospace
@@ -196,7 +205,7 @@ fun LibraryScreen(
                 }
 
                 IconButton(
-                    onClick = { viewModel.scanAudio() },
+                    onClick = { viewModel.rescanLibrary() },
                     modifier = Modifier.minimumInteractiveComponentSize()
                 ) {
                     Icon(
@@ -257,7 +266,7 @@ fun LibraryScreen(
             ) {
                 Button(
                     onClick = {
-                        viewModel.playTrackList(tracks, 0)
+                        viewModel.playTrackList(tracks, 0, source = title)
                         viewModel.navigateTo(Screen.PLAYER)
                     },
                     colors = ButtonDefaults.buttonColors(
@@ -279,7 +288,7 @@ fun LibraryScreen(
                 Button(
                     onClick = {
                         val shuffled = tracks.shuffled()
-                        viewModel.playTrackList(shuffled, 0)
+                        viewModel.playTrackList(shuffled, 0, source = title)
                         viewModel.navigateTo(Screen.PLAYER)
                     },
                     colors = ButtonDefaults.buttonColors(
@@ -324,25 +333,52 @@ fun LibraryScreen(
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
-                        text = "> NO TRACKS FOUND",
+                        text = if (tracksOverride == null && selectedFolderName.isBlank()) {
+                            "> NO MUSIC FOLDER SELECTED"
+                        } else {
+                            "> NO TRACKS FOUND"
+                        },
                         style = MaterialTheme.typography.labelLarge,
                         color = MutedText
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "Scan device storage for MP3 files or reset search",
+                        text = when {
+                            tracksOverride != null -> "No tracks to display yet"
+                            selectedFolderName.isBlank() -> "Choose a folder to browse its music"
+                            else -> "No music files found in $selectedFolderName"
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MutedText
                     )
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Button(
-                        onClick = { viewModel.scanAudio() },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = accent,
-                            contentColor = com.example.ui.theme.buttonContentColorFor(accent)
+                    folderAccessError?.let { error ->
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = error,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
                         )
-                    ) {
-                        Text("Scan Storage", fontWeight = FontWeight.Bold)
+                    }
+                    if (tracksOverride == null) {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Button(
+                            onClick = pickFolder,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = accent,
+                                contentColor = com.example.ui.theme.buttonContentColorFor(accent)
+                            )
+                        ) {
+                            Text(
+                                if (selectedFolderName.isBlank()) "Select Folder" else "Add Folder",
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        if (selectedFolderName.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            OutlinedButton(onClick = { viewModel.rescanLibrary() }) {
+                                Text("Rescan Folder", color = PrimaryText)
+                            }
+                        }
                     }
                 }
             }
@@ -363,7 +399,7 @@ fun LibraryScreen(
                         isFavorite = favoriteIds.contains(track.id),
                         accentColor = accent,
                         onPlay = {
-                            viewModel.playTrackList(tracks, index)
+                            viewModel.playTrackList(tracks, index, source = title)
                             viewModel.navigateTo(Screen.PLAYER)
                         },
                         onPlayNext = { viewModel.playNext(track) },
@@ -420,21 +456,18 @@ fun TrackListItem(
                     .border(0.5.dp, TerminalBorder, RoundedCornerShape(6.dp)),
                 contentAlignment = Alignment.Center
             ) {
-                if (track.albumArtUri != null) {
-                    AsyncImage(
-                        model = track.albumArtUri,
-                        contentDescription = null,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop,
-                        error = painterResource(id = R.drawable.moon_player_logo)
-                    )
-                } else {
-                    Image(
-                        painter = painterResource(id = R.drawable.moon_player_logo),
-                        contentDescription = null,
-                        modifier = Modifier.size(28.dp)
-                    )
-                }
+                // Placeholder stays visible underneath when the file has no artwork.
+                Image(
+                    painter = painterResource(id = R.drawable.moon_player_logo_thumb),
+                    contentDescription = null,
+                    modifier = Modifier.size(28.dp)
+                )
+                AsyncImage(
+                    model = track.artModel,
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
             }
 
             Spacer(modifier = Modifier.width(10.dp))

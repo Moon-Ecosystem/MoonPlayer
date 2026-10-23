@@ -1,42 +1,33 @@
 package com.example
 
-import android.Manifest
-import android.content.pm.PackageManager
-import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DrawerValue
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalNavigationDrawer
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
 import com.example.ui.components.AboutScreen
 import com.example.ui.components.AddToPlaylistDialog
 import com.example.ui.components.EqualizerDialog
@@ -45,18 +36,15 @@ import com.example.ui.components.GroupedTracksScreen
 import com.example.ui.components.LibraryScreen
 import com.example.ui.components.MainPlayerScreen
 import com.example.ui.components.NavigationDrawerContent
+import com.example.ui.components.OnboardingDialog
 import com.example.ui.components.PlaylistDetailScreen
 import com.example.ui.components.PlaylistQueueScreen
 import com.example.ui.components.PlaylistsScreen
 import com.example.ui.components.SettingsScreen
 import com.example.ui.components.SleepTimerDialog
 import com.example.ui.components.StatsScreen
-import com.example.ui.theme.LocalAccentColor
 import com.example.ui.theme.MoonPlayerTheme
-import com.example.ui.theme.PrimaryText
-import com.example.ui.theme.SecondaryText
 import com.example.ui.theme.TerminalBlack
-import com.example.ui.theme.TerminalSurfaceElevated
 import com.example.viewmodel.MainViewModel
 import com.example.viewmodel.Screen
 import kotlinx.coroutines.launch
@@ -67,7 +55,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        // The UI is always dark, so force light system-bar icons regardless of the system theme.
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+        )
 
         setContent {
             val activeAccent by viewModel.activeAccentColor.collectAsState()
@@ -88,34 +80,14 @@ fun MoonPlayerApp(viewModel: MainViewModel) {
     val selectedPlaylist by viewModel.selectedPlaylist.collectAsState()
     val favoriteTracks by viewModel.favoriteTracks.collectAsState(initial = emptyList())
     val playHistory by viewModel.playHistory.collectAsState()
-    val accent = LocalAccentColor.current
+    // null until the saved flag loads, so returning users never see the dialog flash
+    val onboardingComplete by viewModel.onboardingComplete.collectAsState()
 
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
 
-    // Permission check & rationale dialog
-    var showPermissionRationale by remember { mutableStateOf(false) }
-
-    val permissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestMultiplePermissions()
-    ) { results ->
-        val granted = results.values.any { it }
-        if (granted) {
-            viewModel.scanAudio()
-        }
-    }
-
-    LaunchedEffect(Unit) {
-        val permissionsToRequest = mutableListOf<String>()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            permissionsToRequest.add(Manifest.permission.READ_MEDIA_AUDIO)
-            permissionsToRequest.add(Manifest.permission.POST_NOTIFICATIONS)
-        } else {
-            permissionsToRequest.add(Manifest.permission.READ_EXTERNAL_STORAGE)
-        }
-
-        // Show permission explanation prompt if not yet granted
-        showPermissionRationale = true
+    if (onboardingComplete == false) {
+        OnboardingDialog(viewModel = viewModel)
     }
 
     // Hardware Back Button handling
@@ -149,7 +121,23 @@ fun MoonPlayerApp(viewModel: MainViewModel) {
                     .padding(innerPadding)
             ) {
                 // CURRENT SCREEN CONTENT
-                when (currentScreen) {
+                AnimatedContent(
+                    targetState = currentScreen,
+                    transitionSpec = {
+                        when {
+                            // The queue sits "below" the player: it slides up over it and back down.
+                            initialState == Screen.PLAYER && targetState == Screen.QUEUE ->
+                                (slideInVertically(tween(320)) { it } + fadeIn(tween(320))) togetherWith
+                                    (slideOutVertically(tween(320)) { -it / 4 } + fadeOut(tween(320)))
+                            initialState == Screen.QUEUE && targetState == Screen.PLAYER ->
+                                (slideInVertically(tween(320)) { -it / 4 } + fadeIn(tween(320))) togetherWith
+                                    (slideOutVertically(tween(320)) { it } + fadeOut(tween(320)))
+                            else -> fadeIn(tween(200)) togetherWith fadeOut(tween(150))
+                        }
+                    },
+                    label = "screen"
+                ) { screen ->
+                when (screen) {
                     Screen.PLAYER -> {
                         MainPlayerScreen(
                             viewModel = viewModel,
@@ -263,6 +251,7 @@ fun MoonPlayerApp(viewModel: MainViewModel) {
                         )
                     }
                 }
+                }
             }
         }
     }
@@ -287,62 +276,6 @@ fun MoonPlayerApp(viewModel: MainViewModel) {
             viewModel = viewModel,
             track = track,
             onDismiss = { viewModel.setTrackToAddToPlaylist(null) }
-        )
-    }
-
-    // PERMISSION RATIONALE EXPLANATION DIALOG
-    if (showPermissionRationale) {
-        AlertDialog(
-            onDismissRequest = { showPermissionRationale = false },
-            title = {
-                Text(
-                    text = "Storage Permission",
-                    color = PrimaryText,
-                    style = MaterialTheme.typography.titleMedium
-                )
-            },
-            text = {
-                Text(
-                    text = "Moon Player needs permission to discover and play your local MP3 audio files. Your audio stays 100% offline and private on your device.",
-                    color = SecondaryText,
-                    style = MaterialTheme.typography.bodyMedium
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        showPermissionRationale = false
-                        val permissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                            arrayOf(Manifest.permission.READ_MEDIA_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
-                        } else {
-                            arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
-                        }
-                        permissionLauncher.launch(permissions)
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = accent,
-                        contentColor = com.example.ui.theme.buttonContentColorFor(accent)
-                    )
-                ) {
-                    Text("Grant Permission", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
-                }
-            },
-            dismissButton = {
-                OutlinedButton(
-                    onClick = {
-                        showPermissionRationale = false
-                        // Fall back to bundled demo tracks
-                        viewModel.scanAudio()
-                    },
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        contentColor = PrimaryText
-                    ),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, com.example.ui.theme.TerminalBorder)
-                ) {
-                    Text("Use Demo Tracks")
-                }
-            },
-            containerColor = TerminalSurfaceElevated
         )
     }
 }

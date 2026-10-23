@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.ServiceConnection
 import android.net.Uri
 import android.os.IBinder
+import android.util.Log
 import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -15,6 +16,8 @@ import com.example.data.db.PlaylistEntity
 import com.example.data.db.PlaylistTrackEntity
 import com.example.data.model.Track
 import com.example.data.repository.MusicRepository
+import com.example.data.repository.folderNameFromTreeUri
+import com.example.data.repository.isTrackInFolder
 import com.example.data.settings.AccentMode
 import com.example.data.settings.PlayerSettings
 import com.example.data.settings.SettingsManager
@@ -31,6 +34,8 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -61,6 +66,10 @@ enum class LibrarySortOrder {
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
+    private companion object {
+        const val TAG = "MainViewModel"
+    }
+
     private val repository = MusicRepository(application)
     val settingsManager = SettingsManager(application)
 
@@ -88,6 +97,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _trackToAddToPlaylist = MutableStateFlow<Track?>(null)
     val trackToAddToPlaylist = _trackToAddToPlaylist.asStateFlow()
+
+    // Persisted SAF folders (tree URIs) that bound all library scanning
+    private val _libraryFolders = MutableStateFlow<Set<String>>(emptySet())
+    val libraryFolders = _libraryFolders.asStateFlow()
+
+    /**
+     * One live playlist per library folder: (folder name, its tracks). Derived from the library,
+     * so it always matches the folder's current contents and needs no stored copy.
+     */
+    val folderPlaylists: StateFlow<List<Pair<String, List<Track>>>> by lazy {
+        combine(_libraryFolders, allTracks) { folders, tracks ->
+            // Nested folders (e.g. Music and Music/J-pop) each list every track inside them.
+            folders.map { uri ->
+                folderNameFromTreeUri(uri) to tracks.filter { isTrackInFolder(it.contentUri, uri) }
+            }
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    }
+
+    // Comma-separated folder names for status text; blank when no folder is chosen
+    private val _selectedFolderName = MutableStateFlow("")
+    val selectedFolderName = _selectedFolderName.asStateFlow()
+
+    private val _folderAccessError = MutableStateFlow<String?>(null)
+    val folderAccessError = _folderAccessError.asStateFlow()
 
     // Search and Sort
     private val _searchQuery = MutableStateFlow("")
@@ -140,6 +173,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         PlayerSettings()
     )
 
+    // null until DataStore has loaded, so the UI can tell "not yet known" from "first run"
+    val onboardingComplete: StateFlow<Boolean?> = settingsManager.settingsFlow
+        .map<PlayerSettings, Boolean?> { it.onboardingComplete }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    fun completeOnboarding() {
+        viewModelScope.launch { settingsManager.setOnboardingComplete() }
+    }
+
 
     // Filtered & Sorted Tracks
     val filteredTracks: StateFlow<List<Track>> = combine(
@@ -187,6 +229,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _currentIndex = MutableStateFlow(-1)
     val currentIndex = _currentIndex.asStateFlow()
 
+    // In-memory only; a restored or hand-built queue simply shows no source.
+    private val _playingFrom = MutableStateFlow<String?>(null)
+    val playingFrom = _playingFrom.asStateFlow()
+
     private val _repeatMode = MutableStateFlow(Player.REPEAT_MODE_OFF)
     val repeatMode = _repeatMode.asStateFlow()
 
@@ -230,7 +276,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         bindPlaybackService()
-        scanAudio()
+        restoreLibraryFolder()
         observeSettingsForTheme()
     }
 
@@ -245,7 +291,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun observePlaybackService() {
         val service = playbackService ?: return
         viewModelScope.launch {
-            service.currentTrack.collect { track ->
+            service.currentTrack.collect { queued ->
+                // Tracks rebuilt from playlists/history lack format, bitrate and sample rate;
+                // the scanned library copy has them, so prefer it when the track is still there.
+                val track = queued?.let { q -> allTracks.value.firstOrNull { it.id == q.id } ?: q }
                 _currentTrack.value = track
                 updateAccentColor(track)
                 track?.let { repository.recordHistory(it) }
@@ -319,26 +368,113 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun scanAudio() {
-        viewModelScope.launch {
-            repository.scanMediaStore()
-        }
-    }
-
-    fun linkFolderAndScan(
+    /**
+     * Persists the picker's grant and adds that tree to the library alongside any folders
+     * already chosen. On failure the existing library and folders are left untouched.
+     */
+    fun addFolder(
         treeUri: Uri,
-        autoImportAsPlaylist: Boolean = false,
+        grantFlags: Int,
         onResult: ((folderName: String, trackCount: Int) -> Unit)? = null
     ) {
         viewModelScope.launch {
-            val (folderName, tracks) = repository.scanFolderUri(treeUri)
-            repository.addCustomTracks(tracks)
-            if (autoImportAsPlaylist && tracks.isNotEmpty()) {
-                repository.importFolderAsPlaylist(folderName, tracks)
+            val readFlags = grantFlags and Intent.FLAG_GRANT_READ_URI_PERMISSION
+            if (readFlags == 0) {
+                _folderAccessError.value = "The folder picker did not grant read access. Choose the folder again."
+                return@launch
             }
-            onResult?.invoke(folderName, tracks.size)
+
+            try {
+                getApplication<Application>().contentResolver
+                    .takePersistableUriPermission(treeUri, readFlags)
+            } catch (e: SecurityException) {
+                Log.w(TAG, "Persistable folder grant rejected (${e.javaClass.simpleName})")
+                _folderAccessError.value = "Android did not grant lasting access to that folder. Choose it again."
+                return@launch
+            }
+
+            val result = repository.scanFolderUri(treeUri, allTracks.value.associateBy { it.id })
+            if (result.error != null) {
+                _folderAccessError.value = result.error
+                return@launch
+            }
+
+            // distinctBy drops duplicates when the new folder overlaps one already in the library
+            repository.setTracks((allTracks.value + result.tracks).distinctBy { it.id })
+            setFolders(_libraryFolders.value + treeUri.toString())
+            _folderAccessError.value = null
+            onResult?.invoke(result.folderName, result.tracks.size)
         }
     }
+
+    /** Forgets a folder, releases its grant and rebuilds the library from the remaining folders. */
+    fun removeFolder(treeUri: String) {
+        viewModelScope.launch {
+            setFolders(_libraryFolders.value - treeUri)
+            try {
+                getApplication<Application>().contentResolver.releasePersistableUriPermission(
+                    Uri.parse(treeUri), Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: SecurityException) {}
+            scanAllFolders(allTracks.value)
+        }
+    }
+
+    /** Rescans the chosen folders only; never falls back to device-wide storage. */
+    fun rescanLibrary() {
+        viewModelScope.launch {
+            if (_libraryFolders.value.isEmpty()) {
+                _folderAccessError.value = "No music folder selected yet."
+                return@launch
+            }
+            scanAllFolders(allTracks.value)
+        }
+    }
+
+    private fun restoreLibraryFolder() {
+        viewModelScope.launch {
+            _libraryFolders.value = settingsManager.settingsFlow.first().libraryFolderUris
+            _selectedFolderName.value = folderNames()
+            if (_libraryFolders.value.isEmpty()) return@launch
+
+            // Show the last scan instantly; the rescan below only re-reads new or changed files.
+            scanAllFolders(repository.loadCachedLibrary())
+        }
+    }
+
+    /**
+     * Rebuilds the library from every chosen folder, reusing [known] metadata for unchanged
+     * files. A folder that can't be read is reported and skipped; the others still load.
+     */
+    private suspend fun scanAllFolders(known: List<Track>) {
+        val knownById = known.associateBy { it.id }
+        val tracks = mutableListOf<Track>()
+        var error: String? = null
+        for (folder in _libraryFolders.value) {
+            val uri = Uri.parse(folder)
+            if (!hasPersistedReadPermission(uri)) {
+                error = "Access to \"${folderNameFromTreeUri(folder)}\" has expired. Remove it and add it again."
+                continue
+            }
+            val result = repository.scanFolderUri(uri, knownById)
+            if (result.error != null) error = result.error else tracks += result.tracks
+        }
+        val merged = tracks.distinctBy { it.id }
+        if (merged != known) repository.setTracks(merged)
+        _folderAccessError.value = error
+    }
+
+    private suspend fun setFolders(folders: Set<String>) {
+        _libraryFolders.value = folders
+        _selectedFolderName.value = folderNames()
+        settingsManager.setLibraryFolders(folders)
+    }
+
+    private fun folderNames(): String = _libraryFolders.value.joinToString(", ") { folderNameFromTreeUri(it) }
+
+    private fun hasPersistedReadPermission(uri: Uri): Boolean =
+        getApplication<Application>().contentResolver.persistedUriPermissions
+            .any { it.uri == uri && it.isReadPermission }
 
 
     fun navigateTo(screen: Screen) {
@@ -396,7 +532,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         playbackService?.playTrack(track)
     }
 
-    fun playTrackList(tracks: List<Track>, startIndex: Int) {
+    /** [source] names where playback started (playlist, folder, album...) for the player header. */
+    fun playTrackList(tracks: List<Track>, startIndex: Int, source: String) {
+        _playingFrom.value = source
         playbackService?.playTrackList(tracks, startIndex)
     }
 

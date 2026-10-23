@@ -12,9 +12,12 @@ import androidx.room.RoomDatabase
         FavoriteEntity::class,
         HistoryEntity::class,
         QueueEntity::class,
-        TrackStatEntity::class
+        TrackStatEntity::class,
+        LibraryTrackEntity::class
     ],
-    version = 2,
+    // Version 4 is the first schema with real user data. Any bump from here needs a Migration
+    // added to the builder below; only the pre-release versions 1-3 may be wiped.
+    version = 4,
     exportSchema = false
 )
 abstract class MoonPlayerDatabase : RoomDatabase() {
@@ -23,6 +26,7 @@ abstract class MoonPlayerDatabase : RoomDatabase() {
     abstract fun historyDao(): HistoryDao
     abstract fun queueDao(): QueueDao
     abstract fun trackStatDao(): TrackStatDao
+    abstract fun libraryDao(): LibraryDao
 
     companion object {
         @Volatile
@@ -34,7 +38,11 @@ abstract class MoonPlayerDatabase : RoomDatabase() {
                     context.applicationContext,
                     MoonPlayerDatabase::class.java,
                     "moon_player.db"
-                ).fallbackToDestructiveMigration().build()
+                )
+                    // A missing migration now crashes on upgrade instead of silently deleting
+                    // playlists, favourites and stats.
+                    .fallbackToDestructiveMigrationFrom(dropAllTables = true, 1, 2, 3)
+                    .build()
                 INSTANCE = instance
                 instance
             }
