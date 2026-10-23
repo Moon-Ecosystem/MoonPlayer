@@ -40,7 +40,11 @@ data class PlayerSettings(
     val equalizerBands: String = "0,0,0,0,0",
     val bassBoostStrength: Int = 300,
     val libraryFolderUris: Set<String> = emptySet(),
-    val onboardingComplete: Boolean = false
+    val onboardingComplete: Boolean = false,
+    // null until the user is asked the first time lyrics open
+    val onlineLyrics: Boolean? = null,
+    // null = follow the phone's language (romaji unless it reads the song's own script)
+    val preferRomaji: Boolean? = null
 )
 
 class SettingsManager(private val context: Context) {
@@ -60,6 +64,8 @@ class SettingsManager(private val context: Context) {
         val KEY_BASS_BOOST = intPreferencesKey("bass_boost")
         val KEY_LIBRARY_FOLDER_URIS = stringSetPreferencesKey("library_folder_uris")
         val KEY_ONBOARDING_COMPLETE = booleanPreferencesKey("onboarding_complete")
+        val KEY_ONLINE_LYRICS = booleanPreferencesKey("online_lyrics")
+        val KEY_PREFER_ROMAJI = booleanPreferencesKey("prefer_romaji")
     }
 
     val settingsFlow: Flow<PlayerSettings> = context.dataStore.data.map { prefs ->
@@ -85,7 +91,9 @@ class SettingsManager(private val context: Context) {
             equalizerBands = prefs[KEY_EQ_BANDS] ?: "0,0,0,0,0",
             bassBoostStrength = prefs[KEY_BASS_BOOST] ?: 300,
             libraryFolderUris = prefs[KEY_LIBRARY_FOLDER_URIS] ?: emptySet(),
-            onboardingComplete = prefs[KEY_ONBOARDING_COMPLETE] ?: false
+            onboardingComplete = prefs[KEY_ONBOARDING_COMPLETE] ?: false,
+            onlineLyrics = prefs[KEY_ONLINE_LYRICS],
+            preferRomaji = prefs[KEY_PREFER_ROMAJI]
         )
     }
 
@@ -142,6 +150,14 @@ class SettingsManager(private val context: Context) {
 
     suspend fun setLibraryFolders(uris: Set<String>) {
         context.dataStore.edit { it[KEY_LIBRARY_FOLDER_URIS] = uris }
+    }
+
+    suspend fun setOnlineLyrics(enabled: Boolean) {
+        context.dataStore.edit { it[KEY_ONLINE_LYRICS] = enabled }
+    }
+
+    suspend fun setPreferRomaji(enabled: Boolean) {
+        context.dataStore.edit { it[KEY_PREFER_ROMAJI] = enabled }
     }
 
     suspend fun setOnboardingComplete() {
