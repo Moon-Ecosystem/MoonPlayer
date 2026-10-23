@@ -106,6 +106,9 @@ jobs:
             TAG_NAME="${GITHUB_REF#refs/tags/}"
           elif [ -n "${{ inputs.release_tag }}" ]; then
             TAG_NAME="${{ inputs.release_tag }}"
+          elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
+            # Keep a stable release that always points to the latest main-branch APK.
+            TAG_NAME="latest"
           else
             TAG_NAME="v1.0.0-build${{ github.run_number }}"
           fi
@@ -136,7 +139,7 @@ jobs:
           retention-days: 30
 
       - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.create_release == true)
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.create_release == true) || (github.event_name == 'push' && github.ref == 'refs/heads/main')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.prepare_artifacts.outputs.artifact_version }}
@@ -153,3 +156,5 @@ jobs:
             - `checksums-sha256.txt`: SHA-256 integrity checksums.
 
             *Automated build by GitHub Actions.*
+
+            For builds from `main`, this is the rolling `latest` release and is updated on each successful push.
