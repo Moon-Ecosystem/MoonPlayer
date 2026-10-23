@@ -114,6 +114,21 @@ interface QueueDao {
 }
 
 @Dao
+interface LyricsDao {
+    @Query("SELECT * FROM lyrics WHERE trackId = :trackId")
+    suspend fun get(trackId: String): LyricsEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun put(lyrics: LyricsEntity)
+
+    @Query("DELETE FROM lyrics WHERE trackId = :trackId")
+    suspend fun delete(trackId: String)
+
+    @Query("UPDATE lyrics SET chosenKind = :kind WHERE trackId = :trackId")
+    suspend fun setChosenKind(trackId: String, kind: String)
+}
+
+@Dao
 interface TrackStatDao {
     @Query("SELECT * FROM track_stats ORDER BY playCount DESC LIMIT 20")
     fun getTopPlayedTracks(): Flow<List<TrackStatEntity>>

@@ -214,6 +214,26 @@ fun SettingsScreen(
             accentColor = accent
         )
 
+        Spacer(modifier = Modifier.height(4.dp))
+
+        SettingsToggleRow(
+            title = "Online Lyrics",
+            subtitle = "Look up lyrics on LRCLIB. Sends only the song's title, artist, album and length; results are saved on the phone",
+            checked = settings.onlineLyrics == true,
+            onCheckedChange = { viewModel.setOnlineLyrics(it) },
+            accentColor = accent
+        )
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        SettingsToggleRow(
+            title = "Prefer Romaji Lyrics",
+            subtitle = "For Japanese and other non-Latin songs, show romaji when it's available. Each song can still be switched in its lyrics",
+            checked = viewModel.effectivePreferRomaji(settings),
+            onCheckedChange = { viewModel.setPreferRomaji(it) },
+            accentColor = accent
+        )
+
         Spacer(modifier = Modifier.height(20.dp))
 
         // SECTION: LIBRARY RE-SCAN
@@ -412,7 +432,7 @@ fun AboutScreen(
                 HorizontalDivider(color = TerminalBorder, modifier = Modifier.padding(vertical = 12.dp))
 
                 Text(
-                    text = "> ZERO TELEMETRY // 100% PRIVATE",
+                    text = "> ZERO TELEMETRY // LOCAL-FIRST",
                     style = MaterialTheme.typography.labelSmall,
                     color = accent,
                     fontFamily = FontFamily.Monospace,
@@ -420,7 +440,7 @@ fun AboutScreen(
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "Moon Player is 100% local-first and offline. No account, no cloud servers, no ads, and no tracking. Your music, playlists, and listening history remain strictly on your device.",
+                    text = "Moon Player is local-first. No account, no cloud servers, no ads, and no tracking. Your music, playlists, and listening history stay on your device. The only thing that ever goes online is the optional lyrics lookup: if you allow it, the song's title, artist, album and length are sent to LRCLIB.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = PrimaryText,
                     lineHeight = 22.sp

@@ -82,6 +82,24 @@ data class QueueEntity(
     val albumArtUri: String? = null
 )
 
+/**
+ * Lyrics found for a track, kept so each song is looked up once: the synced version of each
+ * kind LRCLIB had, plain text as a fallback, and which kind the user picked for this song.
+ * All texts null records "nothing found" so the lookup isn't repeated until the user retries.
+ */
+@Entity(tableName = "lyrics")
+data class LyricsEntity(
+    @PrimaryKey
+    val trackId: String,
+    val originalLrc: String?,
+    val romajiLrc: String?,
+    val translationLrc: String?,
+    val plain: String?,
+    val chosenKind: String?,
+    val source: String,
+    val fetchedAt: Long
+)
+
 /** Songs played from a playlist (user or folder), keyed by the playlist's name. */
 @Entity(tableName = "playlist_stats")
 data class PlaylistStatEntity(
