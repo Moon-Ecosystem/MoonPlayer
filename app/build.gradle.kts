@@ -16,8 +16,13 @@ android {
     applicationId = "com.aistudio.moonplayer.mzrvqk"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    // versionCode is the commit count, so it only goes up and local and CI builds install over
+    // each other. CI names releases with -PappVersionName=alpha-N.
+    versionCode = runCatching {
+      providers.exec { commandLine("git", "rev-list", "--count", "HEAD") }
+        .standardOutput.asText.get().trim().toInt()
+    }.getOrDefault(1)
+    versionName = findProperty("appVersionName") as String? ?: "dev"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
