@@ -481,14 +481,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _currentScreen.value = screen
     }
 
+    private var playlistTracksJob: Job? = null
+
     fun openPlaylist(playlist: PlaylistEntity) {
         _selectedPlaylist.value = playlist
         _currentScreen.value = Screen.PLAYLIST_DETAIL
-        viewModelScope.launch {
+        // Stop the previous playlist's listener, or it keeps overwriting this one's tracks.
+        playlistTracksJob?.cancel()
+        playlistTracksJob = viewModelScope.launch {
             repository.getPlaylistTracks(playlist.id).collect {
                 _playlistTracks.value = it
             }
         }
+    }
+
+    /** Saves a playlist's new order, given its playlist_tracks row ids top to bottom. */
+    fun reorderPlaylist(rowIdsInOrder: List<Long>) {
+        viewModelScope.launch { repository.reorderPlaylist(rowIdsInOrder) }
     }
 
     fun openQueuePanel() {

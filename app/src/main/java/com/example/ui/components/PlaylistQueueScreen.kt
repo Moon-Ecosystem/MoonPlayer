@@ -24,6 +24,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.filled.DragHandle
+import sh.calvin.reorderable.ReorderableItem
+import sh.calvin.reorderable.rememberReorderableLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -153,7 +157,21 @@ fun PlaylistQueueScreen(
             }
         }
 
+        // Stable per-entry keys ("id#n" for the n-th copy of a song) so a row keeps its key while
+        // dragged; the local order moves instantly and each step is mirrored to the player.
+        var order by remember(queue) { mutableStateOf(keyedEntries(queue)) }
+        val listState = rememberLazyListState()
+        val reorderState = rememberReorderableLazyListState(listState) { from, to ->
+            val fromIndex = order.indexOfFirst { it.first == from.key }
+            val toIndex = order.indexOfFirst { it.first == to.key }
+            if (fromIndex >= 0 && toIndex >= 0) {
+                order = order.toMutableList().apply { add(toIndex, removeAt(fromIndex)) }
+                viewModel.moveQueueItem(fromIndex, toIndex)
+            }
+        }
+
         LazyColumn(
+            state = listState,
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
@@ -320,7 +338,7 @@ fun PlaylistQueueScreen(
             }
 
             // NUMBERED QUEUE TRACK LIST
-            if (queue.isEmpty()) {
+            if (order.isEmpty()) {
                 item {
                     Box(
                         modifier = Modifier
@@ -336,18 +354,22 @@ fun PlaylistQueueScreen(
                     }
                 }
             } else {
-                itemsIndexed(queue, key = { index, trk -> "${trk.id}_$index" }) { index, track ->
-                    val isCurrent = index == currentIndex
-                    NumberedQueueTrackRow(
-                        track = track,
-                        index = index + 1,
-                        isCurrent = isCurrent,
-                        isPlaying = isCurrent && isPlaying,
-                        accentColor = accent,
-                        onPlay = { viewModel.skipToQueueIndex(index) },
-                        onAddToPlaylist = { viewModel.setTrackToAddToPlaylist(track) },
-                        onRemove = { viewModel.removeFromQueue(index) }
-                    )
+                itemsIndexed(order, key = { _, entry -> entry.first }) { index, (key, track) ->
+                    ReorderableItem(reorderState, key = key) { isDragging ->
+                        val isCurrent = index == currentIndex
+                        NumberedQueueTrackRow(
+                            track = track,
+                            index = index + 1,
+                            isCurrent = isCurrent,
+                            isPlaying = isCurrent && isPlaying,
+                            isDragging = isDragging,
+                            accentColor = accent,
+                            dragHandle = Modifier.draggableHandle(),
+                            onPlay = { viewModel.skipToQueueIndex(index) },
+                            onAddToPlaylist = { viewModel.setTrackToAddToPlaylist(track) },
+                            onRemove = { viewModel.removeFromQueue(index) }
+                        )
+                    }
                 }
             }
 
@@ -470,13 +492,16 @@ fun NumberedQueueTrackRow(
     accentColor: androidx.compose.ui.graphics.Color,
     onPlay: () -> Unit,
     onAddToPlaylist: () -> Unit,
-    onRemove: () -> Unit
+    onRemove: () -> Unit,
+    isDragging: Boolean = false,
+    dragHandle: Modifier? = null
 ) {
     var showMenu by remember { mutableStateOf(false) }
 
     Surface(
         shape = RoundedCornerShape(10.dp),
-        color = if (isCurrent) TerminalSurfaceElevated else androidx.compose.ui.graphics.Color.Transparent,
+        color = if (isCurrent || isDragging) TerminalSurfaceElevated else androidx.compose.ui.graphics.Color.Transparent,
+        shadowElevation = if (isDragging) 8.dp else 0.dp,
         border = if (isCurrent) androidx.compose.foundation.BorderStroke(1.dp, accentColor.copy(alpha = 0.5f)) else null,
         modifier = Modifier
             .fillMaxWidth()
@@ -526,6 +551,15 @@ fun NumberedQueueTrackRow(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
+            }
+
+            dragHandle?.let { handle ->
+                Icon(
+                    imageVector = Icons.Default.DragHandle,
+                    contentDescription = "Drag to reorder",
+                    tint = MutedText,
+                    modifier = handle.size(40.dp).padding(8.dp)
+                )
             }
 
             Box {
@@ -621,5 +655,17 @@ fun EqualizerWaveIndicator(
                 .fillMaxSize(h3)
                 .background(accentColor, RoundedCornerShape(2.dp))
         )
+    }
+}
+
+/**
+ * Pairs each queue entry with a key that is unique even when a song is queued twice:
+ * "id#0" for its first copy, "id#1" for the second, and so on.
+ */
+internal fun keyedEntries(queue: List<Track>): List<Pair<String, Track>> {
+    val seen = HashMap<String, Int>()
+    return queue.map { track ->
+        val n = seen.merge(track.id, 1, Int::plus)!! - 1
+        "${track.id}#$n" to track
     }
 }

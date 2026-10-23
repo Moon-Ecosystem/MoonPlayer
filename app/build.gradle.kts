@@ -107,6 +107,8 @@ dependencies {
   implementation(libs.androidx.room.ktx)
   implementation(libs.androidx.room.runtime)
   implementation(libs.coil.compose)
+  // Drag-to-reorder for the queue and playlists; Compose has no built-in equivalent.
+  implementation(libs.reorderable)
   implementation(libs.androidx.media3.exoplayer)
   implementation(libs.androidx.media3.session)
   // implementation(libs.androidx.media3.ui)

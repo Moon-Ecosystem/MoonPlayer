@@ -35,6 +35,19 @@ interface PlaylistDao {
 
     @Query("SELECT COUNT(*) FROM playlist_tracks WHERE playlistId = :playlistId")
     fun getTrackCountForPlaylist(playlistId: Long): Flow<Int>
+
+    /** Position for a song appended to the end of the playlist. */
+    @Query("SELECT COALESCE(MAX(sortOrder), -1) + 1 FROM playlist_tracks WHERE playlistId = :playlistId")
+    suspend fun nextSortOrder(playlistId: Long): Int
+
+    @Query("UPDATE playlist_tracks SET sortOrder = :sortOrder WHERE id = :id")
+    suspend fun setSortOrder(id: Long, sortOrder: Int)
+
+    /** Rewrites positions 0..n-1 in the given order of playlist_tracks row ids. */
+    @Transaction
+    suspend fun reorder(rowIdsInOrder: List<Long>) {
+        rowIdsInOrder.forEachIndexed { position, id -> setSortOrder(id, position) }
+    }
 }
 
 @Dao

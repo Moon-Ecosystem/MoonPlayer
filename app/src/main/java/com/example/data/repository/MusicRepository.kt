@@ -443,7 +443,8 @@ class MusicRepository(private val context: Context) {
             PlaylistTrackEntity(
                 playlistId = playlistId,
                 trackId = track.id,
-                sortOrder = (System.currentTimeMillis() % 100000).toInt(),
+                // Append after the last song (the old time-based value wrapped every 100 s).
+                sortOrder = playlistDao.nextSortOrder(playlistId),
                 uri = track.contentUri,
                 title = track.title,
                 artist = track.artist,
@@ -456,6 +457,10 @@ class MusicRepository(private val context: Context) {
 
     suspend fun removeTrackFromPlaylist(playlistId: Long, trackId: String) = withContext(Dispatchers.IO) {
         playlistDao.removeTrackFromPlaylist(playlistId, trackId)
+    }
+
+    suspend fun reorderPlaylist(rowIdsInOrder: List<Long>) = withContext(Dispatchers.IO) {
+        playlistDao.reorder(rowIdsInOrder)
     }
 
     fun getPlaylistTracks(playlistId: Long): Flow<List<PlaylistTrackEntity>> {
