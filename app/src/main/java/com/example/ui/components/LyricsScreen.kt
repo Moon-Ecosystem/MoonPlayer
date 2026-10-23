@@ -47,6 +47,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Surface
 import androidx.compose.ui.graphics.Color
@@ -79,7 +80,18 @@ fun LyricsPanel(viewModel: MainViewModel, modifier: Modifier = Modifier) {
     val onPlayer = viewModel.currentScreen.collectAsState().value == Screen.PLAYER
     BackHandler(enabled = onPlayer) { viewModel.closeLyrics() }
 
-    Box(modifier = modifier.fillMaxSize().testTag("lyrics_panel")) {
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            // Lines, pills and buttons take their own taps first; a tap on empty space lands
+            // here and brings the album art back.
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClickLabel = "Show album art"
+            ) { viewModel.closeLyrics() }
+            .testTag("lyrics_panel")
+    ) {
         when (val s = state) {
             LyricsUiState.Loading -> CircularProgressIndicator(color = accent, modifier = Modifier.align(Alignment.Center))
             LyricsUiState.AskOnline -> AskOnline(viewModel, Modifier.align(Alignment.Center))
@@ -183,9 +195,9 @@ private fun SyncedLyrics(viewModel: MainViewModel, lines: List<LyricLine>, sourc
                 fontSize = 19.sp,
                 lineHeight = 25.sp,
                 fontWeight = FontWeight.Bold,
+                // Only as wide as its words: tap the words to jump the song there; the space
+                // beside a short line counts as empty and returns to the art.
                 modifier = Modifier
-                    .fillMaxWidth()
-                    // Tap a line to jump the song there.
                     .clickable { viewModel.seekTo(line.timeMs) }
                     .padding(vertical = 7.dp)
             )
