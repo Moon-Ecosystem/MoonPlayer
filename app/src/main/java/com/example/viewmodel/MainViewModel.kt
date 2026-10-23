@@ -14,6 +14,10 @@ import androidx.lifecycle.viewModelScope
 import androidx.media3.common.Player
 import com.example.data.db.PlaylistEntity
 import com.example.data.db.PlaylistTrackEntity
+import com.example.data.lyrics.LyricsKind
+import com.example.data.lyrics.LyricsLookup
+import com.example.data.lyrics.prefersLatinLyrics
+import com.example.data.lyrics.LyricsRepository
 import com.example.data.model.Track
 import com.example.data.repository.MusicRepository
 import com.example.data.repository.folderNameFromTreeUri
@@ -73,6 +77,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = MusicRepository(application)
     val settingsManager = SettingsManager(application)
+    private val lyricsRepository = LyricsRepository(
+        application,
+        com.example.data.db.MoonPlayerDatabase.getInstance(application).lyricsDao()
+    )
+
+    sealed interface LyricsUiState {
+        data object Loading : LyricsUiState
+        /** First open with no local lyrics: ask before anything goes online. */
+        data object AskOnline : LyricsUiState
+        data class Done(val lookup: LyricsLookup, val onlineEnabled: Boolean) : LyricsUiState
+    }
+
+    private val _lyricsOpen = MutableStateFlow(false)
+    val lyricsOpen = _lyricsOpen.asStateFlow()
+    private val _lyricsState = MutableStateFlow<LyricsUiState>(LyricsUiState.Loading)
+    val lyricsState = _lyricsState.asStateFlow()
+    private var lyricsJob: Job? = null
 
     private var playbackService: PlaybackService? = null
     private var isBound = false
@@ -293,6 +314,73 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         bindPlaybackService()
         restoreLibraryFolder()
         observeSettingsForTheme()
+        // Open lyrics follow the song.
+        viewModelScope.launch {
+            _currentTrack.map { it?.id }.distinctUntilChanged().collect { if (_lyricsOpen.value) loadLyrics() }
+        }
+    }
+
+    fun openLyrics() {
+        _lyricsOpen.value = true
+        loadLyrics()
+    }
+
+    fun closeLyrics() {
+        _lyricsOpen.value = false
+    }
+
+    /** Answer to the one-time "look up lyrics online?" question. */
+    fun answerOnlineLyrics(allow: Boolean) {
+        viewModelScope.launch {
+            settingsManager.setOnlineLyrics(allow)
+            loadLyrics(online = allow)
+        }
+    }
+
+    fun setOnlineLyrics(enabled: Boolean) {
+        viewModelScope.launch { settingsManager.setOnlineLyrics(enabled) }
+    }
+
+    /** Drops a saved "no lyrics" (or wrong) result and looks the song up again. */
+    fun retryLyrics() {
+        val track = _currentTrack.value ?: return
+        viewModelScope.launch {
+            lyricsRepository.forget(track.id)
+            loadLyrics()
+        }
+    }
+
+    /** Shows another version (original / romaji / translation) and remembers it for the song. */
+    fun showLyricsKind(kind: LyricsKind) {
+        val track = _currentTrack.value ?: return
+        viewModelScope.launch {
+            lyricsRepository.choose(track.id, kind)
+            loadLyrics(showSpinner = false)
+        }
+    }
+
+    fun setPreferRomaji(enabled: Boolean) {
+        viewModelScope.launch { settingsManager.setPreferRomaji(enabled) }
+    }
+
+    /** The romaji preference in effect: the user's setting, else the phone's language. */
+    fun effectivePreferRomaji(settings: PlayerSettings): Boolean =
+        settings.preferRomaji ?: prefersLatinLyrics(java.util.Locale.getDefault().language)
+
+    private fun loadLyrics(online: Boolean? = null, showSpinner: Boolean = true) {
+        val track = _currentTrack.value ?: return
+        lyricsJob?.cancel()
+        lyricsJob = viewModelScope.launch {
+            if (showSpinner) _lyricsState.value = LyricsUiState.Loading
+            val saved = settingsManager.settingsFlow.first()
+            val allowed = online ?: saved.onlineLyrics
+            val lookup = lyricsRepository.find(track, online = allowed == true, preferRomaji = effectivePreferRomaji(saved))
+            _lyricsState.value = if (allowed == null && lookup !is LyricsLookup.Found) {
+                LyricsUiState.AskOnline
+            } else {
+                LyricsUiState.Done(lookup, onlineEnabled = allowed == true)
+            }
+        }
     }
 
     private fun bindPlaybackService() {

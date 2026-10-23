@@ -10,6 +10,9 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
+    <!-- Only for the opt-in online lyrics lookup (LRCLIB); nothing else goes online. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application
         android:name=".MoonPlayerApplication"
         android:allowBackup="true"

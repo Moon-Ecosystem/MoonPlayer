@@ -36,7 +36,10 @@ import androidx.compose.material.icons.filled.RepeatOne
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -67,6 +70,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
@@ -119,6 +123,7 @@ fun MainPlayerScreen(
     val abEnd by viewModel.abLoopEndMs.collectAsState()
     val favoriteIds by viewModel.favoriteTrackIds.collectAsState()
     val settings by viewModel.settings.collectAsState()
+    val lyricsOpen by viewModel.lyricsOpen.collectAsState()
 
     val accent = LocalAccentColor.current
     val isFavorite = currentTrack?.let { favoriteIds.contains(it.id) } ?: false
@@ -305,51 +310,36 @@ fun MainPlayerScreen(
                     .shadow(16.dp, RoundedCornerShape(16.dp))
                     .clip(RoundedCornerShape(16.dp))
                     .background(TerminalRaisedPanel)
-                    .border(1.5.dp, TerminalBorder, RoundedCornerShape(16.dp)),
+                    .border(
+                        1.5.dp,
+                        if (lyricsOpen) lerp(TerminalBorder, accent, 0.4f) else TerminalBorder,
+                        RoundedCornerShape(16.dp)
+                    )
+                    // Tap the cover for lyrics; while they show, taps belong to the lyric lines.
+                    .clickable(enabled = currentTrack != null && !lyricsOpen, onClickLabel = "Show lyrics") {
+                        viewModel.openLyrics()
+                    },
                 contentAlignment = Alignment.Center
             ) {
-                // Placeholder first; the artwork (embedded or standalone) draws over it when present.
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(24.dp)
-                    ) {
-                        Surface(
-                            shape = CircleShape,
-                            color = TerminalSurfaceElevated,
-                            border = androidx.compose.foundation.BorderStroke(1.dp, TerminalBorder),
-                            modifier = Modifier.size(80.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Default.Equalizer,
-                                    contentDescription = null,
-                                    tint = accent,
-                                    modifier = Modifier.size(40.dp)
-                                )
+                // Lyrics replace the artwork entirely; the corner button brings the cover back.
+                Crossfade(targetState = lyricsOpen && currentTrack != null, animationSpec = tween(220), label = "cover") { showLyrics ->
+                    if (showLyrics) {
+                        // A deep tint of the song's accent: its colour, with white text that stays readable.
+                        Box(modifier = Modifier.fillMaxSize().background(lerp(TerminalRaisedPanel, accent, 0.32f))) {
+                            LyricsPanel(viewModel)
+                            IconButton(
+                                onClick = { viewModel.closeLyrics() },
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(4.dp)
+                                    .testTag("close_lyrics_button")
+                            ) {
+                                Icon(Icons.Default.Image, contentDescription = "Show album art", tint = Color.White.copy(alpha = 0.6f))
                             }
                         }
-                        Spacer(modifier = Modifier.height(14.dp))
-                        Text(
-                            text = (currentTrack?.album ?: "MOON PLAYER").take(24).uppercase(),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MutedText,
-                            fontFamily = FontFamily.Monospace,
-                            letterSpacing = 1.2.sp,
-                            textAlign = TextAlign.Center,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                    } else {
+                        CoverArt(currentTrack, accent)
                     }
-                currentTrack?.let { track ->
-                    AsyncImage(
-                        model = track.artModel,
-                        contentDescription = "Album Art for ${track.title}",
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
                 }
             }
 
@@ -624,6 +614,55 @@ private fun SeekBarSection(
                 modifier = Modifier.clickable {
                     viewModel.setShowRemainingTime(!showRemainingTime)
                 }
+            )
+        }
+    }
+}
+
+/** The cover square's artwork, over a placeholder shown when a track has none. */
+@Composable
+private fun CoverArt(track: Track?, accent: Color) {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(24.dp)
+        ) {
+            Surface(
+                shape = CircleShape,
+                color = TerminalSurfaceElevated,
+                border = androidx.compose.foundation.BorderStroke(1.dp, TerminalBorder),
+                modifier = Modifier.size(80.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Default.Equalizer,
+                        contentDescription = null,
+                        tint = accent,
+                        modifier = Modifier.size(40.dp)
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(14.dp))
+            Text(
+                text = (track?.album ?: "MOON PLAYER").take(24).uppercase(),
+                style = MaterialTheme.typography.labelSmall,
+                color = MutedText,
+                fontFamily = FontFamily.Monospace,
+                letterSpacing = 1.2.sp,
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        track?.let {
+            AsyncImage(
+                model = it.artModel,
+                contentDescription = "Album Art for ${it.title}",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
             )
         }
     }
