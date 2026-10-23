@@ -1,0 +1,6 @@
+{
+  "name": "Moon Player",
+  "description": "An offline MP3 player with a terminal-inspired interface, adaptive album-art accent colors, and queue management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

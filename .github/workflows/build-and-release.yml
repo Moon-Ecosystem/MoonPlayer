@@ -1,0 +1,155 @@
+name: Build & Release APK
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Publish a GitHub Release with the APK'
+        required: true
+        type: boolean
+        default: true
+      release_tag:
+        description: 'Release Tag (e.g. v1.0.0). Required if not triggered by a Git tag.'
+        required: false
+        type: string
+        default: ''
+      release_title:
+        description: 'Release Title (optional)'
+        required: false
+        type: string
+        default: ''
+      prerelease:
+        description: 'Mark as Pre-release'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build & Package APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
+
+      - name: Prepare build environment & Keystore
+        run: |
+          # Ensure gradlew has execute permissions
+          chmod +x gradlew
+
+          # Prepare .env configuration file from template if not present
+          if [ -f ".env.example" ] && [ ! -f ".env" ]; then
+            cp .env.example .env
+          else
+            touch .env
+          fi
+
+          # Restore debug keystore if base64 file exists, or generate one
+          if [ -f "debug.keystore.base64" ]; then
+            echo "Decoding debug.keystore from debug.keystore.base64..."
+            base64 -d debug.keystore.base64 > debug.keystore
+          elif [ ! -f "debug.keystore" ]; then
+            echo "Generating new debug.keystore..."
+            keytool -genkey -v \
+              -keystore debug.keystore \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
+      - name: Build Android APK
+        run: |
+          ./gradlew assembleDebug --stacktrace
+
+      - name: Prepare release artifacts & checksums
+        id: prepare_artifacts
+        run: |
+          mkdir -p release-output
+
+          # Determine version name or tag
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAG_NAME="${GITHUB_REF#refs/tags/}"
+          elif [ -n "${{ inputs.release_tag }}" ]; then
+            TAG_NAME="${{ inputs.release_tag }}"
+          else
+            TAG_NAME="v1.0.0-build${{ github.run_number }}"
+          fi
+
+          echo "artifact_version=${TAG_NAME}" >> "$GITHUB_OUTPUT"
+
+          APK_SRC="app/build/outputs/apk/debug/app-debug.apk"
+          APK_DEST="release-output/MoonPlayer-${TAG_NAME}.apk"
+
+          if [ -f "$APK_SRC" ]; then
+            cp "$APK_SRC" "$APK_DEST"
+            echo "Copied APK to $APK_DEST"
+            
+            # Generate SHA256 checksum for verification
+            cd release-output
+            sha256sum "MoonPlayer-${TAG_NAME}.apk" > checksums-sha256.txt
+            cd ..
+          else
+            echo "ERROR: APK not found at $APK_SRC"
+            exit 1
+          fi
+
+      - name: Upload APK artifact to GitHub Actions
+        uses: actions/upload-artifact@v4
+        with:
+          name: moon-player-apk-${{ steps.prepare_artifacts.outputs.artifact_version }}
+          path: release-output/*
+          retention-days: 30
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.create_release == true)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.prepare_artifacts.outputs.artifact_version }}
+          name: ${{ inputs.release_title != '' && inputs.release_title || steps.prepare_artifacts.outputs.artifact_version }}
+          files: release-output/*
+          draft: false
+          prerelease: ${{ inputs.prerelease || false }}
+          generate_release_notes: true
+          body: |
+            ### 🌙 Moon Player APK Release
+
+            **Artifacts:**
+            - `MoonPlayer-${{ steps.prepare_artifacts.outputs.artifact_version }}.apk`: Ready-to-install Android Application Package.
+            - `checksums-sha256.txt`: SHA-256 integrity checksums.
+
+            *Automated build by GitHub Actions.*
