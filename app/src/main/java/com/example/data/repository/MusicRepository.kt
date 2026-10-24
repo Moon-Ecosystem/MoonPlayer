@@ -20,12 +20,15 @@ import com.example.data.db.PlaylistEntity
 import com.example.data.db.PlaylistTrackEntity
 import com.example.data.db.QueueEntity
 import com.example.data.model.Track
+import com.example.ui.theme.MoonWhite
 import com.example.ui.theme.WarmIvory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 data class FolderScanResult(
@@ -97,10 +100,11 @@ internal fun supportedAudioMime(name: String, mimeType: String): String? =
  * Palette's dominantSwatch is just the largest single cluster, so a flat one-shade backdrop
  * beats a subject spread over many shades (e.g. a blue sky vs. reds and pinks). Instead, sum
  * colourful swatches into 60° hue families weighted by saturation, take the strongest family,
- * and return its strongest swatch. Null when the cover has no colourful swatches (greys).
+ * and return its strongest swatch. Null when the cover is essentially grey: no colourful
+ * swatches, or so few that they're a detail (a character's hair on a black-and-white cover).
  */
 internal fun accentFromSwatches(swatches: List<Pair<Int, Int>>): Int? {
-    data class Scored(val rgb: Int, val family: Int, val weight: Float)
+    data class Scored(val rgb: Int, val family: Int, val weight: Float, val population: Int)
 
     val colourful = swatches.mapNotNull { (rgb, population) ->
         val r = (rgb shr 16 and 0xFF) / 255f
@@ -120,8 +124,10 @@ internal fun accentFromSwatches(swatches: List<Pair<Int, Int>>): Int? {
         }.let { if (it < 0) it + 360 else it }
         // Families centred on red (0°), yellow, green, cyan, blue, magenta; red wraps around 360°.
         val family = (((hue + 30) / 60).toInt()) % 6
-        Scored(rgb, family, population * saturation)
+        Scored(rgb, family, population * saturation, population)
     }
+    // Under 5% colour reads as a black-and-white cover, not as that colour.
+    if (colourful.sumOf { it.population } < 0.05 * swatches.sumOf { it.second }) return null
     val bestFamily = colourful.groupBy { it.family }
         .maxByOrNull { (_, members) -> members.sumOf { it.weight.toDouble() } }
         ?.value ?: return null
@@ -155,6 +161,19 @@ fun formatBreakdown(tracks: List<Track>): List<Pair<String, Int>> =
         .toList()
         .sortedByDescending { it.second }
 
+/**
+ * The folder's cover image among its image file names, e.g. "Cover.jpg" or "folder.png", for
+ * songs without embedded artwork. Names earlier in the list win; other images are ignored.
+ */
+fun pickCoverFile(names: Collection<String>): String? {
+    val covers = names.filter {
+        it.substringAfterLast('.').lowercase() in setOf("jpg", "jpeg", "png", "webp")
+    }
+    return listOf("cover", "folder", "front", "album", "albumart").firstNotNullOfOrNull { base ->
+        covers.firstOrNull { it.substringBeforeLast('.').equals(base, ignoreCase = true) }
+    }
+}
+
 class MusicRepository(private val context: Context) {
 
     private companion object {
@@ -180,12 +199,10 @@ class MusicRepository(private val context: Context) {
     val playHistory = historyDao.getRecentHistory()
     val savedQueue = queueDao.getSavedQueue()
 
-    val topPlayedTracks = trackStatDao.getTopPlayedTracks()
-    val topPlaylists = trackStatDao.getTopPlaylists()
     val recentPlaylistNames = trackStatDao.getRecentPlaylistNames()
-    val mostListenedTracks = trackStatDao.getMostListenedTracks()
-    val totalPlays = trackStatDao.getTotalPlays()
-    val totalListenTimeMs = trackStatDao.getTotalListenTimeMs()
+
+    /** Every play since [since] (ms), oldest first; the listening stats are worked out from these. */
+    fun historySince(since: Long) = historyDao.getHistorySince(since)
 
     val favoriteTracks: Flow<List<Track>> = combine(_allTracks, favoriteTrackIds) { tracks, favIds ->
         val favSet = favIds.toSet()
@@ -202,8 +219,12 @@ class MusicRepository(private val context: Context) {
         }
     }
 
+    // Keeps a play's history row and the time later added to it in the order they were started;
+    // callers launch both from the main thread, which takes the lock before the first suspension.
+    private val historyLock = Mutex()
+
     /** [playlist] names the playlist the song was played from, if any, for playlist stats. */
-    suspend fun recordHistory(track: Track, playlist: String? = null) {
+    suspend fun recordHistory(track: Track, playlist: String? = null): Unit = historyLock.withLock {
         withContext(Dispatchers.IO) {
             historyDao.addHistory(
                 HistoryEntity(
@@ -214,19 +235,24 @@ class MusicRepository(private val context: Context) {
                     album = track.album,
                     durationMs = track.durationMs,
                     uri = track.contentUri,
-                    albumArtUri = track.albumArtUri
+                    albumArtUri = track.albumArtUri,
+                    playlist = playlist
                 )
             )
-            // Record listening statistics
-            trackStatDao.recordPlay(
-                trackId = track.id,
-                title = track.title,
-                artist = track.artist,
-                album = track.album,
-                durationMs = track.durationMs
-            )
-            playlist?.let { trackStatDao.recordPlaylistPlay(it, track.durationMs) }
+            if (playlist != null) trackStatDao.recordPlaylistPlay(playlist)
         }
+    }
+
+    /** Wipes listening stats and play history; playlists, favourites and the library stay. */
+    suspend fun resetStats() = withContext(Dispatchers.IO) {
+        trackStatDao.clearPlaylistStats()
+        historyDao.clearHistory()
+    }
+
+    /** Adds [ms] of actual playing time to the song's latest play in history. */
+    suspend fun addListenTime(trackId: String, ms: Long) {
+        if (ms <= 0) return
+        historyLock.withLock { withContext(Dispatchers.IO) { historyDao.addListenTime(trackId, ms) } }
     }
 
     /**
@@ -257,6 +283,9 @@ class MusicRepository(private val context: Context) {
                     val mimeIdx = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE)
                     val modIdx = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
                     if (idIdx < 0 || nameIdx < 0 || mimeIdx < 0) return@use
+                    // A cover image applies to the songs beside it, and may be listed after them.
+                    val dirTracks = mutableListOf<Track>()
+                    val images = mutableMapOf<String, String>()
 
                     while (cursor.moveToNext()) {
                         val childDocId = cursor.getString(idIdx) ?: continue
@@ -274,14 +303,20 @@ class MusicRepository(private val context: Context) {
                                 val lastModified = if (modIdx >= 0) cursor.getLong(modIdx) else 0L
                                 val cached = known[folderTrackId(childDocId)]
                                     ?.takeIf { lastModified != 0L && it.dateAdded == lastModified }
-                                tracks.add(
+                                dirTracks.add(
                                     cached ?: readFolderTrack(
                                         treeUri, childDocId, name, audioMime, lastModified, folderName
                                     )
                                 )
+                            } else if (mime.startsWith("image/")) {
+                                images[name] = childDocId
                             }
                         }
                     }
+                    val cover = pickCoverFile(images.keys)?.let {
+                        DocumentsContract.buildDocumentUriUsingTree(treeUri, images.getValue(it)).toString()
+                    }
+                    dirTracks.mapTo(tracks) { it.copy(albumArtUri = cover) }
                 }
             }
 
@@ -403,7 +438,8 @@ class MusicRepository(private val context: Context) {
                     dateAdded = it.dateAdded,
                     mimeType = it.mimeType,
                     bitrateKbps = it.bitrateKbps,
-                    sampleRateHz = it.sampleRateHz
+                    sampleRateHz = it.sampleRateHz,
+                    albumArtUri = it.albumArtUri
                 )
             })
         }
@@ -424,7 +460,8 @@ class MusicRepository(private val context: Context) {
                     dateAdded = it.dateAdded,
                     mimeType = it.mimeType,
                     bitrateKbps = it.bitrateKbps,
-                    sampleRateHz = it.sampleRateHz
+                    sampleRateHz = it.sampleRateHz,
+                    albumArtUri = it.albumArtUri
                 )
             }
         }
@@ -460,7 +497,7 @@ class MusicRepository(private val context: Context) {
     }
 
     suspend fun deletePlaylist(id: Long) = withContext(Dispatchers.IO) {
-        playlistDao.deletePlaylist(id)
+        playlistDao.deletePlaylistAndTracks(id)
     }
 
     suspend fun addTrackToPlaylist(playlistId: Long, track: Track) = withContext(Dispatchers.IO) {
@@ -480,8 +517,8 @@ class MusicRepository(private val context: Context) {
         )
     }
 
-    suspend fun removeTrackFromPlaylist(playlistId: Long, trackId: String) = withContext(Dispatchers.IO) {
-        playlistDao.removeTrackFromPlaylist(playlistId, trackId)
+    suspend fun removePlaylistRow(rowId: Long) = withContext(Dispatchers.IO) {
+        playlistDao.removePlaylistRow(rowId)
     }
 
     suspend fun reorderPlaylist(rowIdsInOrder: List<Long>) = withContext(Dispatchers.IO) {
@@ -497,13 +534,9 @@ class MusicRepository(private val context: Context) {
         accentColorCache[track.id]?.let { return@withContext it }
 
         var bitmap: Bitmap? = null
+        // Same order as the artwork shown: embedded art first, then the folder's cover image.
         try {
-            if (track.albumArtUri != null) {
-                val uri = Uri.parse(track.albumArtUri)
-                bitmap = decodeSampled { opts ->
-                    context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
-                }
-            } else if (track.contentUri.startsWith("content://")) {
+            if (track.contentUri.startsWith("content://")) {
                 val mmr = MediaMetadataRetriever()
                 try {
                     mmr.setDataSource(context, Uri.parse(track.contentUri))
@@ -518,15 +551,18 @@ class MusicRepository(private val context: Context) {
                 }
             }
         } catch (_: Exception) {}
+        try {
+            if (bitmap == null && track.albumArtUri != null) {
+                val uri = Uri.parse(track.albumArtUri)
+                bitmap = decodeSampled { opts ->
+                    context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
+                }
+            }
+        } catch (_: Exception) {}
 
         val extractedColor: Color = if (bitmap != null) {
             val palette = Palette.from(bitmap!!).generate()
             val rgb = accentFromSwatches(palette.swatches.map { it.rgb to it.population })
-                ?: (palette.dominantSwatch
-                    ?: palette.vibrantSwatch
-                    ?: palette.lightVibrantSwatch
-                    ?: palette.mutedSwatch
-                    ?: palette.lightMutedSwatch)?.rgb
 
             if (rgb != null) {
                 // Ensure contrast against dark terminal #121212 background (luminance > 0.35)
@@ -537,7 +573,8 @@ class MusicRepository(private val context: Context) {
                 }
                 Color(ColorUtils.HSLToColor(hsl))
             } else {
-                WarmIvory
+                // A black-and-white or grey cover gets a white accent, not a colour it barely has.
+                MoonWhite
             }
         } else {
             WarmIvory

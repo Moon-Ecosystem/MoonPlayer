@@ -5,6 +5,7 @@ import com.example.data.repository.audioFormatLabel
 import com.example.data.repository.folderNameFromTreeUri
 import com.example.data.repository.formatBreakdown
 import com.example.data.repository.isTrackInFolder
+import com.example.data.repository.pickCoverFile
 import com.example.data.repository.pickQuickPlaylists
 import com.example.data.repository.supportedAudioMime
 import org.junit.Assert.assertEquals
@@ -85,5 +86,14 @@ class FolderScanningTest {
         assertEquals("Music", folderNameFromTreeUri(base + "primary%3AMusic"))
         assertEquals("Rock", folderNameFromTreeUri(base + "primary%3AMusic%2FRock"))
         assertEquals("Internal storage", folderNameFromTreeUri(base + "primary%3A"))
+    }
+
+    @Test
+    fun `folder cover image is picked by name, cover first`() {
+        assertEquals("Cover.JPG", pickCoverFile(listOf("scan.png", "folder.jpg", "Cover.JPG")))
+        assertEquals("folder.webp", pickCoverFile(listOf("back.jpg", "folder.webp")))
+        assertEquals("front.jpeg", pickCoverFile(listOf("front.jpeg")))
+        assertNull(pickCoverFile(listOf("booklet.jpg", "cover.txt", "cover")))
+        assertNull(pickCoverFile(emptyList()))
     }
 }

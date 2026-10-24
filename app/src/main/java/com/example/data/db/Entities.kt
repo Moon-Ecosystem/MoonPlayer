@@ -1,5 +1,6 @@
 package com.example.data.db
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
@@ -48,7 +49,8 @@ data class LibraryTrackEntity(
     val dateAdded: Long,
     val mimeType: String,
     val bitrateKbps: Int,
-    val sampleRateHz: Int
+    val sampleRateHz: Int,
+    val albumArtUri: String? = null
 )
 
 @Entity(tableName = "favorites")
@@ -69,7 +71,12 @@ data class HistoryEntity(
     val album: String,
     val durationMs: Long,
     val uri: String,
-    val albumArtUri: String? = null
+    val albumArtUri: String? = null,
+    // Time actually played; -1 for plays recorded before this was tracked (database version 9).
+    @ColumnInfo(defaultValue = "0")
+    val listenedMs: Long = 0L,
+    // The playlist (yours or a folder) it was played from, if any.
+    val playlist: String? = null
 )
 
 @Entity(tableName = "playback_queue")
@@ -103,7 +110,10 @@ data class LyricsEntity(
     val fetchedAt: Long
 )
 
-/** Songs played from a playlist (user or folder), keyed by the playlist's name. */
+/**
+ * When each playlist (user or folder) was last played from, keyed by name, for the drawer's
+ * order. Listening stats come from history; totalTimeMs is no longer updated.
+ */
 @Entity(tableName = "playlist_stats")
 data class PlaylistStatEntity(
     @PrimaryKey
@@ -111,17 +121,5 @@ data class PlaylistStatEntity(
     val playCount: Int,
     val totalTimeMs: Long,
     val lastPlayedAt: Long
-)
-
-@Entity(tableName = "track_stats")
-data class TrackStatEntity(
-    @PrimaryKey
-    val trackId: String,
-    val title: String,
-    val artist: String,
-    val album: String,
-    val playCount: Int = 1,
-    val totalTimeMs: Long = 0L,
-    val lastPlayedAt: Long = System.currentTimeMillis()
 )
 

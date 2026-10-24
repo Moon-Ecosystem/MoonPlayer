@@ -33,4 +33,17 @@ class AccentColorTest {
     fun `grey covers fall back to the caller`() {
         assertNull(accentFromSwatches(listOf(0x808080 to 500, 0x101010 to 300, 0xF0F0F0 to 200)))
     }
+
+    @Test
+    fun `a black and white cover with a sliver of colour counts as grey`() {
+        // Like the Mob Psycho 100 III cover: white and black, plus one character's orange hair.
+        val hair = 0xD08A30 to 15
+        assertNull(accentFromSwatches(listOf(0xF4F4F4 to 600, 0x111111 to 300, 0x9A9A9A to 85, hair)))
+    }
+
+    @Test
+    fun `a small but real splash of colour still sets the accent`() {
+        val redLogo = 0xC0102A to 80
+        assertEquals(0xC0102A, accentFromSwatches(listOf(0x111111 to 700, 0x9A9A9A to 220, redLogo)))
+    }
 }

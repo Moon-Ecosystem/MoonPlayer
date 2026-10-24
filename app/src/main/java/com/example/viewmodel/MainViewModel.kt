@@ -26,14 +26,27 @@ import com.example.data.repository.pickQuickPlaylists
 import com.example.data.settings.AccentMode
 import com.example.data.settings.PlayerSettings
 import com.example.data.settings.SettingsManager
+import com.example.data.stats.ListeningStats
+import com.example.data.stats.StatsDetail
+import com.example.data.stats.StatsKind
+import com.example.data.stats.StatsRange
+import com.example.data.stats.detailStats
+import com.example.data.stats.listeningStats
 import com.example.service.PlaybackService
 import com.example.ui.theme.CelestialCyan
+import com.example.ui.theme.MoonWhite
 import com.example.ui.theme.NeonCoral
 import com.example.ui.theme.TerminalAmber
 import com.example.ui.theme.TerminalGreen
 import com.example.ui.theme.VioletGlow
 import com.example.ui.theme.WarmIvory
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -61,6 +74,58 @@ enum class Screen {
     ABOUT
 }
 
+
+/**
+ * The song-list screens' search box and sort menu. Shared by All Songs and the screens that show
+ * their own list (folders, folder playlists, albums...), so both controls work on every one.
+ */
+fun searchAndSort(tracks: List<Track>, query: String, sort: LibrarySortOrder): List<Track> {
+    val found = if (query.isBlank()) tracks else tracks.filter {
+        it.title.contains(query, ignoreCase = true) ||
+            it.artist.contains(query, ignoreCase = true) ||
+            it.album.contains(query, ignoreCase = true) ||
+            it.folderPath.contains(query, ignoreCase = true)
+    }
+    return when (sort) {
+        LibrarySortOrder.TITLE_ASC -> found.sortedBy { it.title.lowercase() }
+        LibrarySortOrder.ARTIST_ASC -> found.sortedBy { it.artist.lowercase() }
+        LibrarySortOrder.ALBUM_ASC -> found.sortedBy { it.album.lowercase() }
+        LibrarySortOrder.DURATION_DESC -> found.sortedByDescending { it.durationMs }
+        LibrarySortOrder.DATE_ADDED_DESC -> found.sortedByDescending { it.dateAdded }
+    }
+}
+
+/**
+ * Time a song actually plays, by [now] (a clock in ms). It runs only while playing, so pauses
+ * and the unplayed rest of a skipped song don't count.
+ */
+class ListenTimer(private val now: () -> Long) {
+    private var since: Long? = null
+    private var stored = 0L
+
+    fun setPlaying(playing: Boolean) {
+        val start = since
+        if (playing) {
+            if (start == null) since = now()
+        } else if (start != null) {
+            stored += now() - start
+            since = null
+        }
+    }
+
+    /** The time played since the last take; counting starts again from zero. */
+    fun take(): Long {
+        val start = since
+        var played = stored
+        if (start != null) {
+            val t = now()
+            played += t - start
+            since = t
+        }
+        stored = 0L
+        return played
+    }
+}
 
 enum class LibrarySortOrder {
     TITLE_ASC,
@@ -202,32 +267,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _openFolderPlaylist.value = null
     }
 
-    val topPlaylists = repository.topPlaylists.stateIn(
-        viewModelScope,
-        SharingStarted.WhileSubscribed(5000),
-        emptyList()
-    )
+    private val _statsRange = MutableStateFlow(StatsRange.ALL)
+    val statsRange = _statsRange.asStateFlow()
 
-    val topPlayedTracks = repository.topPlayedTracks.stateIn(
-        viewModelScope,
-        SharingStarted.WhileSubscribed(5000),
-        emptyList()
-    )
-    val mostListenedTracks = repository.mostListenedTracks.stateIn(
-        viewModelScope,
-        SharingStarted.WhileSubscribed(5000),
-        emptyList()
-    )
-    val totalPlays = repository.totalPlays.stateIn(
-        viewModelScope,
-        SharingStarted.WhileSubscribed(5000),
-        0
-    )
-    val totalListenTimeMs = repository.totalListenTimeMs.stateIn(
-        viewModelScope,
-        SharingStarted.WhileSubscribed(5000),
-        0L
-    )
+    fun setStatsRange(range: StatsRange) {
+        _statsRange.value = range
+    }
+
+    // The plays in the chosen range, with that range, re-read whenever history changes.
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val statsRows = _statsRange.flatMapLatest { range ->
+        repository.historySince(range.since(System.currentTimeMillis())).map { range to it }
+    }.shareIn(viewModelScope, SharingStarted.WhileSubscribed(5000), replay = 1)
+
+    /** The stats page for the chosen range. Null while loading. */
+    val listeningStats: StateFlow<ListeningStats?> = statsRows
+        .map { (range, rows) -> listeningStats(rows, range, System.currentTimeMillis()) }
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    // The artist, album, song or playlist whose detail page is open on the stats screen.
+    private val _statsSelection = MutableStateFlow<Pair<StatsKind, String>?>(null)
+
+    fun openStatsDetail(kind: StatsKind, key: String) {
+        _statsSelection.value = kind to key
+    }
+
+    fun closeStatsDetail() {
+        _statsSelection.value = null
+    }
+
+    /** The open detail page's stats, in the same range; null when none is open. */
+    val statsDetail: StateFlow<StatsDetail?> = combine(statsRows, _statsSelection) { (range, rows), selected ->
+        selected?.let { (kind, key) -> detailStats(rows, kind, key, range, System.currentTimeMillis()) }
+    }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
     val settings = settingsManager.settingsFlow.stateIn(
         viewModelScope,
         SharingStarted.WhileSubscribed(5000),
@@ -248,28 +321,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val filteredTracks: StateFlow<List<Track>> = combine(
         allTracks,
         _searchQuery,
-        _sortOrder
-    ) { tracks, query, sort ->
-        var list = if (query.isBlank()) {
-            tracks
-        } else {
-            tracks.filter {
-                it.title.contains(query, ignoreCase = true) ||
-                it.artist.contains(query, ignoreCase = true) ||
-                it.album.contains(query, ignoreCase = true) ||
-                it.folderPath.contains(query, ignoreCase = true)
-            }
-        }
-
-        list = when (sort) {
-            LibrarySortOrder.TITLE_ASC -> list.sortedBy { it.title.lowercase() }
-            LibrarySortOrder.ARTIST_ASC -> list.sortedBy { it.artist.lowercase() }
-            LibrarySortOrder.ALBUM_ASC -> list.sortedBy { it.album.lowercase() }
-            LibrarySortOrder.DURATION_DESC -> list.sortedByDescending { it.durationMs }
-            LibrarySortOrder.DATE_ADDED_DESC -> list.sortedByDescending { it.dateAdded }
-        }
-        list
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        _sortOrder,
+        ::searchAndSort
+    ).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // Playback state forwarded from PlaybackService
     private val _currentTrack = MutableStateFlow<Track?>(null)
@@ -296,6 +350,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // Playlist (user or folder) the current queue came from, credited in playlist stats
     private var playingPlaylist: String? = null
+
+    // Listening time goes to the song (and playlist) that was playing, saved on pause and on song change.
+    private val listenTimer = ListenTimer { android.os.SystemClock.elapsedRealtime() }
+    private var listenTrackId: String? = null
+    private var listenPlaylist: String? = null
+
+    private var playCounted = false
+
+    /**
+     * Adds the current song to history and play counts once it's set to play. Tapping a song
+     * while paused announces it before play() is called, so this also runs when playback starts;
+     * a session restored paused and never played isn't counted.
+     */
+    private fun countPlayOnceStarted(service: PlaybackService) {
+        val track = _currentTrack.value ?: return
+        if (playCounted || !service.player.playWhenReady) return
+        playCounted = true
+        viewModelScope.launch { repository.recordHistory(track, listenPlaylist) }
+    }
+
+    private fun saveListenTime(scope: CoroutineScope = viewModelScope) {
+        val trackId = listenTrackId ?: return
+        val ms = listenTimer.take()
+        scope.launch { repository.addListenTime(trackId, ms) }
+    }
 
     private val _repeatMode = MutableStateFlow(Player.REPEAT_MODE_OFF)
     val repeatMode = _repeatMode.asStateFlow()
@@ -464,10 +543,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 // Tracks rebuilt from playlists/history lack format, bitrate and sample rate;
                 // the scanned library copy has them, so prefer it when the track is still there.
                 val track = queued?.let { q -> allTracks.value.firstOrNull { it.id == q.id } ?: q }
+                saveListenTime()
+                listenTrackId = track?.id
+                listenPlaylist = playingPlaylist
                 _currentTrack.value = track
                 updateAccentColor(track)
-                // A session restored paused isn't a play; don't add it to history or stats.
-                if (service.player.playWhenReady) track?.let { repository.recordHistory(it, playingPlaylist) }
+                playCounted = false
+                countPlayOnceStarted(service)
                 // Player position, not 0: right after a restore it's the restored position.
                 track?.let { settingsManager.savePlaybackState(it.contentUri, service.player.currentPosition) }
             }
@@ -475,6 +557,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             service.isPlaying.collect { playing ->
                 _isPlaying.value = playing
+                listenTimer.setPlaying(playing)
+                if (playing) countPlayOnceStarted(service) else saveListenTime()
                 // Remember where playback stopped so Resume on App Launch can continue there.
                 if (!playing) _currentTrack.value?.let {
                     settingsManager.savePlaybackState(it.contentUri, service.player.currentPosition)
@@ -536,6 +620,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     AccentMode.TERMINAL_GREEN -> _activeAccentColor.value = TerminalGreen
                     AccentMode.AMBER_GLOW -> _activeAccentColor.value = TerminalAmber
                     AccentMode.CYAN_PULSE -> _activeAccentColor.value = CelestialCyan
+                    AccentMode.MOON_WHITE -> _activeAccentColor.value = MoonWhite
                     AccentMode.SYSTEM -> _activeAccentColor.value = systemAccentColor()
                 }
             }
@@ -677,6 +762,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _currentScreen.value = screen
         // Coming back to Playlists later shows the list, not the folder last opened.
         if (screen != Screen.PLAYLISTS) _openFolderPlaylist.value = null
+        if (screen != Screen.STATS) _statsSelection.value = null
     }
 
     private var playlistTracksJob: Job? = null
@@ -870,9 +956,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun removeTrackFromPlaylist(playlistId: Long, trackId: String) {
+    /** Removes one entry of a playlist, by its playlist_tracks row id (duplicates are allowed). */
+    fun removePlaylistRow(rowId: Long) {
         viewModelScope.launch {
-            repository.removeTrackFromPlaylist(playlistId, trackId)
+            repository.removePlaylistRow(rowId)
         }
     }
 
@@ -909,6 +996,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun resetStats() {
+        // The song playing now counts from zero too, not with time from before the reset.
+        listenTimer.take()
+        viewModelScope.launch { repository.resetStats() }
+    }
+
     fun setAccentMode(mode: AccentMode) {
         viewModelScope.launch {
             settingsManager.setAccentMode(mode)
@@ -934,6 +1027,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     override fun onCleared() {
+        // viewModelScope is already cancelled here, so save on a scope of its own.
+        saveListenTime(CoroutineScope(Dispatchers.IO))
         if (isBound) {
             try {
                 getApplication<Application>().unbindService(serviceConnection)

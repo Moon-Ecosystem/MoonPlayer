@@ -13,12 +13,15 @@ import coil.request.Options
 import com.example.data.model.Track
 import okio.Buffer
 
-/** Coil model for cover art stored inside an audio file (ID3 APIC frame). */
-data class EmbeddedArt(val contentUri: String)
+/**
+ * Coil model for cover art stored inside an audio file (ID3 APIC frame), falling back to
+ * [coverUri] (the folder's cover.jpg or similar) when the file has none.
+ */
+data class EmbeddedArt(val contentUri: String, val coverUri: String? = null)
 
-/** What to hand Coil for a track's artwork: a standalone cover if known, else the file's embedded art. */
+/** What to hand Coil for a track's artwork. */
 val Track.artModel: Any
-    get() = albumArtUri ?: EmbeddedArt(contentUri)
+    get() = EmbeddedArt(contentUri, albumArtUri)
 
 class EmbeddedArtFetcher(
     private val data: EmbeddedArt,
@@ -27,14 +30,19 @@ class EmbeddedArtFetcher(
 
     override suspend fun fetch(): FetchResult {
         val retriever = MediaMetadataRetriever()
-        val bytes = try {
+        val embedded = try {
             retriever.setDataSource(options.context, Uri.parse(data.contentUri))
             retriever.embeddedPicture
+        } catch (_: Exception) {
+            null
         } finally {
             retriever.release()
         }
+        val bytes = embedded ?: data.coverUri?.let { uri ->
+            options.context.contentResolver.openInputStream(Uri.parse(uri))?.use { it.readBytes() }
+        }
         // Throwing (not returning null) makes Coil report an error, so the caller's placeholder stays.
-        checkNotNull(bytes) { "No embedded artwork" }
+        checkNotNull(bytes) { "No artwork" }
         return SourceResult(
             source = ImageSource(Buffer().write(bytes), options.context),
             mimeType = null,
@@ -50,5 +58,5 @@ class EmbeddedArtFetcher(
 
 /** Lets Coil's memory cache hold decoded thumbnails so scrolling back doesn't re-read files. */
 class EmbeddedArtKeyer : Keyer<EmbeddedArt> {
-    override fun key(data: EmbeddedArt, options: Options): String = data.contentUri
+    override fun key(data: EmbeddedArt, options: Options): String = "${data.contentUri}|${data.coverUri}"
 }

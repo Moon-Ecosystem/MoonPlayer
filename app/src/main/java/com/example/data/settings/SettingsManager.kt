@@ -22,6 +22,7 @@ enum class AccentMode {
     TERMINAL_GREEN,
     AMBER_GLOW,
     CYAN_PULSE,
+    MOON_WHITE,
     SYSTEM // Android 12+ wallpaper (Material You) accent
 }
 
