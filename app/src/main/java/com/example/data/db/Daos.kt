@@ -104,6 +104,17 @@ interface HistoryDao {
 
     @Query("DELETE FROM history")
     suspend fun clearHistory()
+
+    /** Every play since [since] (ms), oldest first, for the listening stats. */
+    @Query("SELECT * FROM history WHERE playedAt >= :since ORDER BY playedAt ASC")
+    fun getHistorySince(since: Long): Flow<List<HistoryEntity>>
+
+    /** Adds played time to the song's latest play (old plays with unknown time, -1, are left alone). */
+    @Query(
+        "UPDATE history SET listenedMs = listenedMs + :ms " +
+            "WHERE id = (SELECT MAX(id) FROM history WHERE trackId = :trackId) AND listenedMs >= 0"
+    )
+    suspend fun addListenTime(trackId: String, ms: Long)
 }
 
 @Dao
@@ -139,66 +150,11 @@ interface LyricsDao {
     suspend fun setChosenKind(trackId: String, kind: String)
 }
 
+/** When each playlist was last played from; listening stats themselves come from history. */
 @Dao
 interface TrackStatDao {
-    @Query("SELECT * FROM track_stats ORDER BY playCount DESC LIMIT 20")
-    fun getTopPlayedTracks(): Flow<List<TrackStatEntity>>
-
-    @Query("SELECT * FROM track_stats ORDER BY totalTimeMs DESC LIMIT 20")
-    fun getMostListenedTracks(): Flow<List<TrackStatEntity>>
-
-    @Query("SELECT SUM(playCount) FROM track_stats")
-    fun getTotalPlays(): Flow<Int?>
-
-    @Query("SELECT SUM(totalTimeMs) FROM track_stats")
-    fun getTotalListenTimeMs(): Flow<Long?>
-
-    @Query("SELECT * FROM track_stats WHERE trackId = :trackId")
-    suspend fun getStatForTrack(trackId: String): TrackStatEntity?
-
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertOrUpdateStat(stat: TrackStatEntity)
-
-    /** Counts a play when a song starts; the time listened is added separately by [addListenTime]. */
-    @Transaction
-    suspend fun recordPlay(trackId: String, title: String, artist: String, album: String) {
-        val existing = getStatForTrack(trackId)
-        if (existing != null) {
-            insertOrUpdateStat(
-                existing.copy(
-                    playCount = existing.playCount + 1,
-                    lastPlayedAt = System.currentTimeMillis()
-                )
-            )
-        } else {
-            insertOrUpdateStat(
-                TrackStatEntity(
-                    trackId = trackId,
-                    title = title,
-                    artist = artist,
-                    album = album,
-                    playCount = 1,
-                    totalTimeMs = 0L,
-                    lastPlayedAt = System.currentTimeMillis()
-                )
-            )
-        }
-    }
-
-    @Query("UPDATE track_stats SET totalTimeMs = totalTimeMs + :ms WHERE trackId = :trackId")
-    suspend fun addListenTime(trackId: String, ms: Long)
-
-    @Query("UPDATE playlist_stats SET totalTimeMs = totalTimeMs + :ms WHERE name = :name")
-    suspend fun addPlaylistListenTime(name: String, ms: Long)
-
-    @Query("DELETE FROM track_stats")
-    suspend fun clearTrackStats()
-
     @Query("DELETE FROM playlist_stats")
     suspend fun clearPlaylistStats()
-
-    @Query("SELECT * FROM playlist_stats ORDER BY playCount DESC LIMIT 10")
-    fun getTopPlaylists(): Flow<List<PlaylistStatEntity>>
 
     @Query("SELECT name FROM playlist_stats ORDER BY lastPlayedAt DESC LIMIT 20")
     fun getRecentPlaylistNames(): Flow<List<String>>

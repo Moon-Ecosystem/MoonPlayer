@@ -192,7 +192,7 @@ fun SettingsScreen(
         // Resume on launch
         SettingsToggleRow(
             title = "Resume on App Launch",
-            subtitle = "Restore last active track and queue on launch",
+            subtitle = "Reopen at the last song, queue and position, paused. Press Play to continue",
             checked = settings.resumeOnLaunch,
             onCheckedChange = { viewModel.setResumeOnLaunch(it) },
             accentColor = accent

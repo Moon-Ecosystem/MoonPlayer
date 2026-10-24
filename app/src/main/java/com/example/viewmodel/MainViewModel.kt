@@ -26,6 +26,12 @@ import com.example.data.repository.pickQuickPlaylists
 import com.example.data.settings.AccentMode
 import com.example.data.settings.PlayerSettings
 import com.example.data.settings.SettingsManager
+import com.example.data.stats.ListeningStats
+import com.example.data.stats.StatsDetail
+import com.example.data.stats.StatsKind
+import com.example.data.stats.StatsRange
+import com.example.data.stats.detailStats
+import com.example.data.stats.listeningStats
 import com.example.service.PlaybackService
 import com.example.ui.theme.CelestialCyan
 import com.example.ui.theme.MoonWhite
@@ -36,7 +42,11 @@ import com.example.ui.theme.VioletGlow
 import com.example.ui.theme.WarmIvory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -257,32 +267,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _openFolderPlaylist.value = null
     }
 
-    val topPlaylists = repository.topPlaylists.stateIn(
-        viewModelScope,
-        SharingStarted.WhileSubscribed(5000),
-        emptyList()
-    )
+    private val _statsRange = MutableStateFlow(StatsRange.ALL)
+    val statsRange = _statsRange.asStateFlow()
 
-    val topPlayedTracks = repository.topPlayedTracks.stateIn(
-        viewModelScope,
-        SharingStarted.WhileSubscribed(5000),
-        emptyList()
-    )
-    val mostListenedTracks = repository.mostListenedTracks.stateIn(
-        viewModelScope,
-        SharingStarted.WhileSubscribed(5000),
-        emptyList()
-    )
-    val totalPlays = repository.totalPlays.stateIn(
-        viewModelScope,
-        SharingStarted.WhileSubscribed(5000),
-        0
-    )
-    val totalListenTimeMs = repository.totalListenTimeMs.stateIn(
-        viewModelScope,
-        SharingStarted.WhileSubscribed(5000),
-        0L
-    )
+    fun setStatsRange(range: StatsRange) {
+        _statsRange.value = range
+    }
+
+    // The plays in the chosen range, with that range, re-read whenever history changes.
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val statsRows = _statsRange.flatMapLatest { range ->
+        repository.historySince(range.since(System.currentTimeMillis())).map { range to it }
+    }.shareIn(viewModelScope, SharingStarted.WhileSubscribed(5000), replay = 1)
+
+    /** The stats page for the chosen range. Null while loading. */
+    val listeningStats: StateFlow<ListeningStats?> = statsRows
+        .map { (range, rows) -> listeningStats(rows, range, System.currentTimeMillis()) }
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    // The artist, album, song or playlist whose detail page is open on the stats screen.
+    private val _statsSelection = MutableStateFlow<Pair<StatsKind, String>?>(null)
+
+    fun openStatsDetail(kind: StatsKind, key: String) {
+        _statsSelection.value = kind to key
+    }
+
+    fun closeStatsDetail() {
+        _statsSelection.value = null
+    }
+
+    /** The open detail page's stats, in the same range; null when none is open. */
+    val statsDetail: StateFlow<StatsDetail?> = combine(statsRows, _statsSelection) { (range, rows), selected ->
+        selected?.let { (kind, key) -> detailStats(rows, kind, key, range, System.currentTimeMillis()) }
+    }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
     val settings = settingsManager.settingsFlow.stateIn(
         viewModelScope,
         SharingStarted.WhileSubscribed(5000),
@@ -355,8 +373,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun saveListenTime(scope: CoroutineScope = viewModelScope) {
         val trackId = listenTrackId ?: return
         val ms = listenTimer.take()
-        val playlist = listenPlaylist
-        scope.launch { repository.addListenTime(trackId, playlist, ms) }
+        scope.launch { repository.addListenTime(trackId, ms) }
     }
 
     private val _repeatMode = MutableStateFlow(Player.REPEAT_MODE_OFF)
@@ -745,6 +762,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _currentScreen.value = screen
         // Coming back to Playlists later shows the list, not the folder last opened.
         if (screen != Screen.PLAYLISTS) _openFolderPlaylist.value = null
+        if (screen != Screen.STATS) _statsSelection.value = null
     }
 
     private var playlistTracksJob: Job? = null

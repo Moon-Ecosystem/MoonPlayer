@@ -14,14 +14,13 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         FavoriteEntity::class,
         HistoryEntity::class,
         QueueEntity::class,
-        TrackStatEntity::class,
         LibraryTrackEntity::class,
         PlaylistStatEntity::class,
         LyricsEntity::class
     ],
     // Version 4 is the first schema with real user data. Any bump from here needs a Migration
     // added to the builder below; only the pre-release versions 1-3 may be wiped.
-    version = 9,
+    version = 10,
     exportSchema = false
 )
 abstract class MoonPlayerDatabase : RoomDatabase() {
@@ -82,6 +81,18 @@ abstract class MoonPlayerDatabase : RoomDatabase() {
             }
         }
 
+        // Listening stats now come from history: each play keeps the time actually played and the
+        // playlist it came from. Older plays never recorded their time, so they're marked -1
+        // (unknown) and only count as plays. The per-song totals table it replaces is dropped.
+        val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `history` ADD COLUMN `listenedMs` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `history` ADD COLUMN `playlist` TEXT")
+                db.execSQL("UPDATE `history` SET `listenedMs` = -1")
+                db.execSQL("DROP TABLE IF EXISTS `track_stats`")
+            }
+        }
+
         @Volatile
         private var INSTANCE: MoonPlayerDatabase? = null
 
@@ -95,7 +106,7 @@ abstract class MoonPlayerDatabase : RoomDatabase() {
                     // A missing migration now crashes on upgrade instead of silently deleting
                     // playlists, favourites and stats.
                     .fallbackToDestructiveMigrationFrom(dropAllTables = true, 1, 2, 3)
-                    .addMigrations(MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
+                    .addMigrations(MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
                     .build()
                 INSTANCE = instance
                 instance

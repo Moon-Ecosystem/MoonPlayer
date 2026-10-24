@@ -27,6 +27,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 data class FolderScanResult(
@@ -197,12 +199,10 @@ class MusicRepository(private val context: Context) {
     val playHistory = historyDao.getRecentHistory()
     val savedQueue = queueDao.getSavedQueue()
 
-    val topPlayedTracks = trackStatDao.getTopPlayedTracks()
-    val topPlaylists = trackStatDao.getTopPlaylists()
     val recentPlaylistNames = trackStatDao.getRecentPlaylistNames()
-    val mostListenedTracks = trackStatDao.getMostListenedTracks()
-    val totalPlays = trackStatDao.getTotalPlays()
-    val totalListenTimeMs = trackStatDao.getTotalListenTimeMs()
+
+    /** Every play since [since] (ms), oldest first; the listening stats are worked out from these. */
+    fun historySince(since: Long) = historyDao.getHistorySince(since)
 
     val favoriteTracks: Flow<List<Track>> = combine(_allTracks, favoriteTrackIds) { tracks, favIds ->
         val favSet = favIds.toSet()
@@ -219,8 +219,12 @@ class MusicRepository(private val context: Context) {
         }
     }
 
+    // Keeps a play's history row and the time later added to it in the order they were started;
+    // callers launch both from the main thread, which takes the lock before the first suspension.
+    private val historyLock = Mutex()
+
     /** [playlist] names the playlist the song was played from, if any, for playlist stats. */
-    suspend fun recordHistory(track: Track, playlist: String? = null) {
+    suspend fun recordHistory(track: Track, playlist: String? = null): Unit = historyLock.withLock {
         withContext(Dispatchers.IO) {
             historyDao.addHistory(
                 HistoryEntity(
@@ -231,34 +235,24 @@ class MusicRepository(private val context: Context) {
                     album = track.album,
                     durationMs = track.durationMs,
                     uri = track.contentUri,
-                    albumArtUri = track.albumArtUri
+                    albumArtUri = track.albumArtUri,
+                    playlist = playlist
                 )
             )
-            // Record listening statistics
-            trackStatDao.recordPlay(
-                trackId = track.id,
-                title = track.title,
-                artist = track.artist,
-                album = track.album
-            )
-            playlist?.let { trackStatDao.recordPlaylistPlay(it) }
+            if (playlist != null) trackStatDao.recordPlaylistPlay(playlist)
         }
     }
 
     /** Wipes listening stats and play history; playlists, favourites and the library stay. */
     suspend fun resetStats() = withContext(Dispatchers.IO) {
-        trackStatDao.clearTrackStats()
         trackStatDao.clearPlaylistStats()
         historyDao.clearHistory()
     }
 
-    /** Adds [ms] of actual playing time to the song's stats, and to [playlist]'s if it was played from one. */
-    suspend fun addListenTime(trackId: String, playlist: String?, ms: Long) {
+    /** Adds [ms] of actual playing time to the song's latest play in history. */
+    suspend fun addListenTime(trackId: String, ms: Long) {
         if (ms <= 0) return
-        withContext(Dispatchers.IO) {
-            trackStatDao.addListenTime(trackId, ms)
-            playlist?.let { trackStatDao.addPlaylistListenTime(it, ms) }
-        }
+        historyLock.withLock { withContext(Dispatchers.IO) { historyDao.addListenTime(trackId, ms) } }
     }
 
     /**
