@@ -64,16 +64,7 @@ jobs:
           cache-read-only: false
 
       - name: Prepare build environment
-        run: |
-          # Ensure gradlew has execute permissions
-          chmod +x gradlew
-
-          # Prepare .env configuration file from template if not present
-          if [ -f ".env.example" ] && [ ! -f ".env" ]; then
-            cp .env.example .env
-          else
-            touch .env
-          fi
+        run: chmod +x gradlew
 
       # Release signing reads KEYSTORE_PATH / STORE_PASSWORD / KEY_PASSWORD (key alias "upload").
       # A fixed key keeps every release installable over the previous one.

@@ -13,6 +13,9 @@ data class PlaylistEntity(
     val updatedAt: Long = System.currentTimeMillis()
 )
 
+/** Result row of [PlaylistDao.getTrackCounts]. */
+data class PlaylistSongCount(val playlistId: Long, val songs: Int)
+
 @Entity(
     tableName = "playlist_tracks",
     indices = [Index(value = ["playlistId"]), Index(value = ["trackId"])]

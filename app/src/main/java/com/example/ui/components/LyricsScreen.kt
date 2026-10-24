@@ -174,8 +174,8 @@ private fun SyncedLyrics(viewModel: MainViewModel, lines: List<LyricLine>, sourc
 
     LazyColumn(
         state = listState,
-        // Top and end padding keep lines clear of the corner "show album art" button.
-        contentPadding = PaddingValues(start = 18.dp, end = 48.dp, top = 48.dp, bottom = 200.dp),
+        // Top padding leaves room for the Original / Romaji / Translation pills.
+        contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 48.dp, bottom = 200.dp),
         modifier = Modifier.fillMaxSize().nestedScroll(guard)
     ) {
         itemsIndexed(lines) { index, line ->
@@ -214,7 +214,7 @@ private fun PlainLyrics(text: String, source: LyricsSource) {
             .fillMaxSize()
             .nestedScroll(guard)
             .verticalScroll(rememberScrollState())
-            .padding(start = 18.dp, end = 48.dp, top = 48.dp, bottom = 16.dp)
+            .padding(start = 18.dp, end = 18.dp, top = 48.dp, bottom = 16.dp)
     ) {
         Text(text = text, color = PrimaryText, fontSize = 17.sp, lineHeight = 25.sp, fontWeight = FontWeight.SemiBold)
         SourceLabel(source, synced = false)

@@ -128,6 +128,14 @@ internal fun accentFromSwatches(swatches: List<Pair<Int, Int>>): Int? {
     return bestFamily.maxBy { it.weight }.rgb
 }
 
+/**
+ * The playlists for the quick panel: the one playing, then the most recently played, then the
+ * rest in their given order, limited to [limit]. Names no longer in [all] (deleted or renamed
+ * playlists still in the play stats) are skipped.
+ */
+fun pickQuickPlaylists(all: List<String>, recentlyPlayed: List<String>, playing: String?, limit: Int = 4): List<String> =
+    (listOfNotNull(playing) + recentlyPlayed + all).filter { it in all }.distinct().take(limit)
+
 /** Short codec label for the player UI, e.g. "audio/flac" -> "FLAC". */
 fun audioFormatLabel(mimeType: String): String = when (mimeType) {
     "audio/mpeg" -> "MP3"
@@ -167,12 +175,14 @@ class MusicRepository(private val context: Context) {
     private val accentColorCache = mutableMapOf<String, Color>()
 
     val allPlaylists = playlistDao.getAllPlaylists()
+    val playlistSongCounts = playlistDao.getTrackCounts()
     val favoriteTrackIds = favoriteDao.getAllFavoriteIds()
     val playHistory = historyDao.getRecentHistory()
     val savedQueue = queueDao.getSavedQueue()
 
     val topPlayedTracks = trackStatDao.getTopPlayedTracks()
     val topPlaylists = trackStatDao.getTopPlaylists()
+    val recentPlaylistNames = trackStatDao.getRecentPlaylistNames()
     val mostListenedTracks = trackStatDao.getMostListenedTracks()
     val totalPlays = trackStatDao.getTotalPlays()
     val totalListenTimeMs = trackStatDao.getTotalListenTimeMs()

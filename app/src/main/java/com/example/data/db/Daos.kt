@@ -36,6 +36,10 @@ interface PlaylistDao {
     @Query("SELECT COUNT(*) FROM playlist_tracks WHERE playlistId = :playlistId")
     fun getTrackCountForPlaylist(playlistId: Long): Flow<Int>
 
+    /** Song count of every playlist that has songs (empty ones have no row). */
+    @Query("SELECT playlistId, COUNT(*) AS songs FROM playlist_tracks GROUP BY playlistId")
+    fun getTrackCounts(): Flow<List<PlaylistSongCount>>
+
     /** Position for a song appended to the end of the playlist. */
     @Query("SELECT COALESCE(MAX(sortOrder), -1) + 1 FROM playlist_tracks WHERE playlistId = :playlistId")
     suspend fun nextSortOrder(playlistId: Long): Int
@@ -176,6 +180,9 @@ interface TrackStatDao {
 
     @Query("SELECT * FROM playlist_stats ORDER BY playCount DESC LIMIT 10")
     fun getTopPlaylists(): Flow<List<PlaylistStatEntity>>
+
+    @Query("SELECT name FROM playlist_stats ORDER BY lastPlayedAt DESC LIMIT 20")
+    fun getRecentPlaylistNames(): Flow<List<String>>
 
     @Query("SELECT * FROM playlist_stats WHERE name = :name")
     suspend fun getPlaylistStat(name: String): PlaylistStatEntity?

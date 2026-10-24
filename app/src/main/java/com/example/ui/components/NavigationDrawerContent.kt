@@ -23,7 +23,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.BarChart
-import androidx.compose.material.icons.filled.Equalizer
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Folder
@@ -33,10 +32,7 @@ import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayCircle
-import androidx.compose.material.icons.filled.PlaylistPlay
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -53,6 +49,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
@@ -75,6 +72,7 @@ fun NavigationDrawerContent(
 ) {
     val currentScreen by viewModel.currentScreen.collectAsState()
     val allTracks by viewModel.allTracks.collectAsState()
+    val quickPlaylists by viewModel.quickPlaylists.collectAsState()
     val accent = LocalAccentColor.current
 
     Surface(
@@ -142,6 +140,35 @@ fun NavigationDrawerContent(
 
             Spacer(modifier = Modifier.height(6.dp))
 
+            // PLAYLISTS: the one playing, then the most recently played (up to 4), so a playlist
+            // is one tap from the drawer instead of going through the Playlists screen.
+            Text(
+                text = "PLAYLISTS",
+                style = MaterialTheme.typography.labelSmall,
+                color = MutedText,
+                modifier = Modifier.padding(start = 12.dp, top = 8.dp, bottom = 4.dp),
+                letterSpacing = 1.2.sp
+            )
+            quickPlaylists.forEach { item ->
+                QuickPlaylistRow(item, accent) {
+                    item.playlist?.let { viewModel.openPlaylist(it) } ?: viewModel.openFolderPlaylist(item.name)
+                    onCloseDrawer()
+                }
+            }
+            Text(
+                text = if (quickPlaylists.isEmpty()) "Create a playlist ›" else "All playlists ›",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = accent,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        viewModel.navigateTo(Screen.PLAYLISTS)
+                        onCloseDrawer()
+                    }
+                    .padding(horizontal = 12.dp, vertical = 10.dp)
+            )
+
             // MUSIC SECTIONS
             Text(
                 text = "LIBRARY",
@@ -158,17 +185,6 @@ fun NavigationDrawerContent(
                 accentColor = accent,
                 onClick = {
                     viewModel.navigateTo(Screen.LIBRARY)
-                    onCloseDrawer()
-                }
-            )
-
-            DrawerItem(
-                icon = Icons.Default.PlaylistPlay,
-                label = "Playlists",
-                isSelected = currentScreen == Screen.PLAYLISTS,
-                accentColor = accent,
-                onClick = {
-                    viewModel.navigateTo(Screen.PLAYLISTS)
                     onCloseDrawer()
                 }
             )
@@ -228,16 +244,8 @@ fun NavigationDrawerContent(
                 }
             )
 
-            Spacer(modifier = Modifier.height(6.dp))
-
-            // AUDIO CONTROLS & UTILS
-            Text(
-                text = "AUDIO & TOOLS",
-                style = MaterialTheme.typography.labelSmall,
-                color = MutedText,
-                modifier = Modifier.padding(start = 12.dp, top = 8.dp, bottom = 4.dp),
-                letterSpacing = 1.2.sp
-            )
+            // Queue, equalizer and sleep timer live on the player; rescanning is in Settings.
+            HorizontalDivider(color = TerminalBorder, thickness = 1.dp, modifier = Modifier.padding(vertical = 10.dp))
 
             DrawerItem(
                 icon = Icons.Default.BarChart,
@@ -248,61 +256,6 @@ fun NavigationDrawerContent(
                     viewModel.navigateTo(Screen.STATS)
                     onCloseDrawer()
                 }
-            )
-
-            DrawerItem(
-                icon = Icons.Default.QueueMusic,
-                label = "Queue / Up Next",
-                isSelected = currentScreen == Screen.QUEUE,
-                accentColor = accent,
-                onClick = {
-                    viewModel.navigateTo(Screen.QUEUE)
-                    onCloseDrawer()
-                }
-            )
-
-            DrawerItem(
-                icon = Icons.Default.Equalizer,
-                label = "Equalizer",
-                isSelected = false,
-                accentColor = accent,
-                onClick = {
-                    onCloseDrawer()
-                    viewModel.openEqualizer()
-                }
-            )
-
-            DrawerItem(
-                icon = Icons.Default.Timer,
-                label = "Sleep Timer",
-                isSelected = false,
-                accentColor = accent,
-                onClick = {
-                    onCloseDrawer()
-                    viewModel.openSleepTimer()
-                }
-            )
-
-            DrawerItem(
-                icon = Icons.Default.Refresh,
-                label = "Scan Library",
-                isSelected = false,
-                accentColor = accent,
-                onClick = {
-                    viewModel.rescanLibrary()
-                    onCloseDrawer()
-                }
-            )
-
-            Spacer(modifier = Modifier.height(6.dp))
-
-            // SYSTEM & APP
-            Text(
-                text = "SYSTEM",
-                style = MaterialTheme.typography.labelSmall,
-                color = MutedText,
-                modifier = Modifier.padding(start = 12.dp, top = 8.dp, bottom = 4.dp),
-                letterSpacing = 1.2.sp
             )
 
             DrawerItem(
@@ -325,6 +278,56 @@ fun NavigationDrawerContent(
                     viewModel.navigateTo(Screen.ABOUT)
                     onCloseDrawer()
                 }
+            )
+        }
+    }
+}
+
+/** A playlist in the drawer: icon tile, name, and "Playing · Folder · N songs" (what applies) underneath. */
+@Composable
+private fun QuickPlaylistRow(item: MainViewModel.QuickPlaylist, accent: androidx.compose.ui.graphics.Color, onClick: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(
+                if (item.playing) accent.copy(alpha = 0.16f) else androidx.compose.ui.graphics.Color.Transparent,
+                RoundedCornerShape(8.dp)
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 7.dp)
+    ) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(36.dp)
+                .background(TerminalSurfaceElevated, RoundedCornerShape(6.dp))
+        ) {
+            Icon(
+                imageVector = if (item.playlist != null) Icons.Default.QueueMusic else Icons.Default.Folder,
+                contentDescription = null,
+                tint = if (item.playing) accent else MutedText,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = item.name,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = PrimaryText,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = listOfNotNull(
+                    "Playing".takeIf { item.playing },
+                    "Folder".takeIf { item.playlist == null },
+                    if (item.songs == 1) "1 song" else "${item.songs} songs"
+                ).joinToString(" · "),
+                style = MaterialTheme.typography.labelSmall,
+                color = if (item.playing) accent else MutedText
             )
         }
     }

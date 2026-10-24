@@ -36,7 +36,7 @@ import androidx.compose.material.icons.filled.RepeatOne
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
-import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Lyrics
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
@@ -325,18 +325,7 @@ fun MainPlayerScreen(
                 Crossfade(targetState = lyricsOpen && currentTrack != null, animationSpec = tween(220), label = "cover") { showLyrics ->
                     if (showLyrics) {
                         // A deep tint of the song's accent: its colour, with white text that stays readable.
-                        Box(modifier = Modifier.fillMaxSize().background(lerp(TerminalRaisedPanel, accent, 0.32f))) {
-                            LyricsPanel(viewModel)
-                            IconButton(
-                                onClick = { viewModel.closeLyrics() },
-                                modifier = Modifier
-                                    .align(Alignment.TopEnd)
-                                    .padding(4.dp)
-                                    .testTag("close_lyrics_button")
-                            ) {
-                                Icon(Icons.Default.Image, contentDescription = "Show album art", tint = Color.White.copy(alpha = 0.6f))
-                            }
-                        }
+                        LyricsPanel(viewModel, Modifier.background(lerp(TerminalRaisedPanel, accent, 0.32f)))
                     } else {
                         CoverArt(currentTrack, accent)
                     }
@@ -372,6 +361,20 @@ fun MainPlayerScreen(
                             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    // Lyrics toggle: lit while the cover square shows lyrics, tap again for the art.
+                    IconButton(
+                        onClick = { if (lyricsOpen) viewModel.closeLyrics() else viewModel.openLyrics() },
+                        modifier = Modifier
+                            .testTag("lyrics_button")
+                            .minimumInteractiveComponentSize()
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Lyrics,
+                            contentDescription = if (lyricsOpen) "Hide lyrics" else "Show lyrics",
+                            tint = if (lyricsOpen) accent else MutedText,
+                            modifier = Modifier.size(24.dp)
                         )
                     }
                     IconButton(
