@@ -92,20 +92,20 @@ fun PlaylistsScreen(
     var playlistToDelete by remember { mutableStateOf<PlaylistEntity?>(null) }
     var newPlaylistName by remember { mutableStateOf("") }
     var renamePlaylistName by remember { mutableStateOf("") }
-    var openFolderIndex by remember { mutableStateOf<Int?>(null) }
+    val openFolderName by viewModel.openFolderPlaylist.collectAsState()
 
     val pickFolder = rememberFolderPicker { uri, flags ->
         viewModel.addFolder(uri, flags)
     }
 
     // A folder playlist opens as a track list, the same way the Folders screen does.
-    folderPlaylists.getOrNull(openFolderIndex ?: -1)?.let { (name, tracks) ->
-        BackHandler { openFolderIndex = null }
+    folderPlaylists.firstOrNull { it.first == openFolderName }?.let { (name, tracks) ->
+        BackHandler { viewModel.closeFolderPlaylist() }
         LibraryScreen(
             viewModel = viewModel,
             title = name.uppercase(),
             tracksOverride = tracks,
-            onBack = { openFolderIndex = null }
+            onBack = { viewModel.closeFolderPlaylist() }
         )
         return
     }
@@ -221,14 +221,14 @@ fun PlaylistsScreen(
                     if (folderPlaylists.isNotEmpty()) {
                         item { PlaylistSectionLabel("FOLDERS") }
                     }
-                    itemsIndexed(folderPlaylists) { index, (name, tracks) ->
+                    itemsIndexed(folderPlaylists) { _, (name, tracks) ->
                         Surface(
                             shape = RoundedCornerShape(8.dp),
                             color = TerminalRaisedPanel,
                             border = androidx.compose.foundation.BorderStroke(1.dp, TerminalBorder),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable { openFolderIndex = index }
+                                .clickable { viewModel.openFolderPlaylist(name) }
                         ) {
                             Row(
                                 modifier = Modifier
@@ -767,7 +767,7 @@ fun AddToPlaylistDialog(
                     ) {
                         Icon(imageVector = Icons.Default.Add, contentDescription = null, tint = accent)
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("+ New Playlist")
+                        Text("New Playlist")
                     }
                 }
             }

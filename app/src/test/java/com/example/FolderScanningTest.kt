@@ -5,6 +5,7 @@ import com.example.data.repository.audioFormatLabel
 import com.example.data.repository.folderNameFromTreeUri
 import com.example.data.repository.formatBreakdown
 import com.example.data.repository.isTrackInFolder
+import com.example.data.repository.pickQuickPlaylists
 import com.example.data.repository.supportedAudioMime
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -68,6 +69,14 @@ class FolderScanningTest {
         val tracks = listOf(t("audio/flac"), t("audio/mpeg"), t("audio/mpeg"), t(""))
         assertEquals(listOf("MP3" to 2, "FLAC" to 1), formatBreakdown(tracks))
         assertTrue(SUPPORTED_FORMAT_LABELS.startsWith("MP3 · FLAC"))
+    }
+
+    @Test
+    fun `quick playlists put the playing one first, then recent, then the rest`() {
+        val all = listOf("Chill", "Gym", "J-pop", "Road trip", "Study")
+        assertEquals(listOf("Gym", "Study", "Chill", "J-pop"), pickQuickPlaylists(all, listOf("Study", "Gym", "Old deleted"), playing = "Gym"))
+        assertEquals(listOf("Chill", "Gym"), pickQuickPlaylists(all, emptyList(), playing = null, limit = 2))
+        assertEquals(emptyList<String>(), pickQuickPlaylists(emptyList(), listOf("Gym"), playing = "Gym"))
     }
 
     @Test

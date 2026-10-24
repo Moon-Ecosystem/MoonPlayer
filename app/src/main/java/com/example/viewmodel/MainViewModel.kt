@@ -22,6 +22,7 @@ import com.example.data.model.Track
 import com.example.data.repository.MusicRepository
 import com.example.data.repository.folderNameFromTreeUri
 import com.example.data.repository.isTrackInFolder
+import com.example.data.repository.pickQuickPlaylists
 import com.example.data.settings.AccentMode
 import com.example.data.settings.PlayerSettings
 import com.example.data.settings.SettingsManager
@@ -169,6 +170,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         SharingStarted.WhileSubscribed(5000),
         emptyList()
     )
+    /** A playlist in the drawer: [playlist] for one of yours, null for a folder playlist. */
+    data class QuickPlaylist(val name: String, val playlist: PlaylistEntity?, val songs: Int, val playing: Boolean)
+
+    /** Up to 4 playlists for the drawer: the one playing, then the most recently played. */
+    val quickPlaylists: StateFlow<List<QuickPlaylist>> by lazy {
+        combine(
+            allPlaylists, folderPlaylists, repository.recentPlaylistNames, _playingFrom, repository.playlistSongCounts
+        ) { mine, folders, recent, playing, counts ->
+            val byName = mine.associateBy { it.name }
+            val songsById = counts.associate { it.playlistId to it.songs }
+            val folderSizes = folders.toMap().mapValues { it.value.size }
+            pickQuickPlaylists(mine.map { it.name } + folders.map { it.first }, recent, playing).map { name ->
+                val playlist = byName[name]
+                val songs = playlist?.let { songsById[it.id] ?: 0 } ?: folderSizes[name] ?: 0
+                QuickPlaylist(name, playlist, songs, playing = name == playing)
+            }
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    }
+
+    // Folder playlist shown on the Playlists screen; kept here so the quick panel can open one.
+    private val _openFolderPlaylist = MutableStateFlow<String?>(null)
+    val openFolderPlaylist = _openFolderPlaylist.asStateFlow()
+
+    fun openFolderPlaylist(name: String) {
+        navigateTo(Screen.PLAYLISTS)
+        _openFolderPlaylist.value = name
+    }
+
+    fun closeFolderPlaylist() {
+        _openFolderPlaylist.value = null
+    }
+
     val topPlaylists = repository.topPlaylists.stateIn(
         viewModelScope,
         SharingStarted.WhileSubscribed(5000),
@@ -642,6 +675,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun navigateTo(screen: Screen) {
         _currentScreen.value = screen
+        // Coming back to Playlists later shows the list, not the folder last opened.
+        if (screen != Screen.PLAYLISTS) _openFolderPlaylist.value = null
     }
 
     private var playlistTracksJob: Job? = null
