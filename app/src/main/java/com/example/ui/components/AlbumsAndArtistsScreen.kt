@@ -58,6 +58,7 @@ import coil.compose.AsyncImage
 import com.example.data.artModel
 import com.example.R
 import com.example.data.model.Track
+import com.example.data.model.splitArtists
 import com.example.ui.theme.LocalAccentColor
 import com.example.ui.theme.MutedText
 import com.example.ui.theme.PrimaryText
@@ -93,7 +94,10 @@ fun GroupedTracksScreen(
     val groups = remember(allTracks, mode) {
         when (mode) {
             GroupMode.ALBUMS -> allTracks.groupBy { it.album }
-            GroupMode.ARTISTS -> allTracks.groupBy { it.artist }
+            // A song with several artists is listed under each of them.
+            GroupMode.ARTISTS -> allTracks
+                .flatMap { track -> splitArtists(track.artist).map { it to track } }
+                .groupBy({ it.first }, { it.second })
             GroupMode.FOLDERS -> allTracks.groupBy { it.folderPath }
         }
     }

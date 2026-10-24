@@ -1,5 +1,16 @@
 package com.example.data.model
 
+// "/" or ";" between names, except the slash inside AC/DC.
+private val ARTIST_SEPARATOR = Regex("""\s*(?:;|(?<!\bAC)/(?!DC\b))\s*""", RegexOption.IGNORE_CASE)
+
+/**
+ * The artists in a song's artist tag. Android joins a file's several artists with "/" (some
+ * tags use ";"), so "RADWIMPS/Toaka" is two. "&" and "," are left alone: too many single
+ * names contain them ("Simon & Garfunkel", "Earth, Wind & Fire").
+ */
+fun splitArtists(artist: String): List<String> =
+    artist.split(ARTIST_SEPARATOR).filter { it.isNotBlank() }.distinct().ifEmpty { listOf(artist) }
+
 data class Track(
     val id: String,
     val contentUri: String,

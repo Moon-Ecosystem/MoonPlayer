@@ -1,6 +1,7 @@
 package com.example.data.stats
 
 import com.example.data.db.HistoryEntity
+import com.example.data.model.splitArtists
 import java.util.Calendar
 import java.util.TimeZone
 
@@ -57,7 +58,7 @@ fun detailStats(
 ): StatsDetail {
     val mine = rows.filter {
         when (kind) {
-            StatsKind.ARTIST -> it.artist == key
+            StatsKind.ARTIST -> key in splitArtists(it.artist)
             StatsKind.ALBUM -> it.album == key
             StatsKind.TRACK -> it.trackId == key
             StatsKind.PLAYLIST -> it.playlist == key
@@ -108,9 +109,10 @@ fun listeningStats(
 ): ListeningStats {
     fun HistoryEntity.time() = listenedMs.coerceAtLeast(0L)
 
-    fun rank(key: (HistoryEntity) -> String?, detail: (List<HistoryEntity>) -> String): List<Ranked> =
-        rows.filter { !key(it).isNullOrBlank() }
-            .groupBy { key(it)!! }
+    // A play counts under each name [keys] gives it, e.g. every artist of a duet.
+    fun rank(keys: (HistoryEntity) -> List<String?>, detail: (List<HistoryEntity>) -> String): List<Ranked> =
+        rows.flatMap { play -> keys(play).filterNot { it.isNullOrBlank() }.map { it!! to play } }
+            .groupBy({ it.first }, { it.second })
             .map { (name, plays) -> Ranked(name, detail(plays), plays.size, plays.sumOf { it.time() }) }
             .sortedWith(compareByDescending<Ranked> { it.listenedMs }.thenByDescending { it.plays })
 
@@ -163,10 +165,10 @@ fun listeningStats(
     return ListeningStats(
         plays = rows.size,
         listenedMs = rows.sumOf { it.time() },
-        artists = rank({ it.artist }) { "" },
-        albums = rank({ it.album }) { plays -> mostCommon(plays) { it.artist } },
+        artists = rank({ splitArtists(it.artist) }) { "" },
+        albums = rank({ listOf(it.album) }) { plays -> mostCommon(plays) { it.artist } },
         tracks = tracks,
-        playlists = rank({ it.playlist }) { "" },
+        playlists = rank({ listOf(it.playlist) }) { "" },
         trend = trend,
         trendPerMonth = trendPerMonth,
         byHour = hourMs.mapIndexed { h, ms -> Bar(h.toString(), ms) },

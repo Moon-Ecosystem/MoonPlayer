@@ -1,7 +1,10 @@
 package com.example
 
 import com.example.data.db.HistoryEntity
+import com.example.data.model.splitArtists
+import com.example.data.stats.StatsKind
 import com.example.data.stats.StatsRange
+import com.example.data.stats.detailStats
 import com.example.data.stats.listeningStats
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -96,6 +99,30 @@ class ListeningStatsTest {
         val expected = Calendar.getInstance(utc).apply { clear(); set(2026, Calendar.OCTOBER, 15) }.timeInMillis
         assertEquals(expected, since)
         assertEquals(0L, StatsRange.ALL.since(now, utc))
+    }
+
+    @Test
+    fun `artist tags split on slash and semicolon, but not inside AC-DC or on ampersands`() {
+        assertEquals(listOf("RADWIMPS", "Toaka"), splitArtists("RADWIMPS/Toaka"))
+        assertEquals(listOf("MOB CHOIR", "sajou no hana"), splitArtists("MOB CHOIR / sajou no hana"))
+        assertEquals(listOf("A", "B", "C"), splitArtists("A; B/C"))
+        assertEquals(listOf("AC/DC"), splitArtists("AC/DC"))
+        assertEquals(listOf("AC/DC", "Foo"), splitArtists("AC/DC/Foo"))
+        assertEquals(listOf("Simon & Garfunkel"), splitArtists("Simon & Garfunkel"))
+        assertEquals(listOf("Unknown Artist"), splitArtists("Unknown Artist"))
+    }
+
+    @Test
+    fun `a duet counts fully for each of its artists`() {
+        val rows = listOf(
+            play("suzume", "RADWIMPS/Toaka", 120_000, now - day),
+            play("sparkle", "RADWIMPS", 60_000, now - day)
+        )
+        val stats = listeningStats(rows, StatsRange.ALL, now, utc)
+        assertEquals(listOf("RADWIMPS" to 180_000L, "Toaka" to 120_000L), stats.artists.map { it.name to it.listenedMs })
+        assertEquals(180_000, stats.listenedMs) // the song itself is counted once
+        val toaka = detailStats(rows, StatsKind.ARTIST, "Toaka", StatsRange.ALL, now, utc)
+        assertEquals(listOf("suzume"), toaka.stats.tracks.map { it.name })
     }
 
     @Test
