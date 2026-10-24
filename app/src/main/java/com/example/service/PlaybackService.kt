@@ -306,8 +306,18 @@ class PlaybackService : MediaSessionService() {
             if (player.playbackState == Player.STATE_ENDED) {
                 player.seekTo(0)
             }
-            player.play()
+            play()
         }
+    }
+
+    /**
+     * play() that also works on an idle player. Dismissing the paused notification makes Media3
+     * stop the player (STATE_IDLE, queue kept), and play() alone does nothing until it's prepared
+     * again; media buttons prepare by themselves, the app's own buttons need this.
+     */
+    private fun play() {
+        if (player.playbackState == Player.STATE_IDLE && player.mediaItemCount > 0) player.prepare()
+        player.play()
     }
 
     fun seekTo(positionMs: Long) {
@@ -332,7 +342,7 @@ class PlaybackService : MediaSessionService() {
     fun skipToQueueItem(index: Int) {
         if (index in 0 until player.mediaItemCount) {
             player.seekTo(index, 0L)
-            player.play()
+            play()
         }
     }
 
