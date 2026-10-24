@@ -956,9 +956,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun removeTrackFromPlaylist(playlistId: Long, trackId: String) {
+    /** Removes one entry of a playlist, by its playlist_tracks row id (duplicates are allowed). */
+    fun removePlaylistRow(rowId: Long) {
         viewModelScope.launch {
-            repository.removeTrackFromPlaylist(playlistId, trackId)
+            repository.removePlaylistRow(rowId)
         }
     }
 

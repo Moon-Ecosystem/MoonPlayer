@@ -43,10 +43,11 @@ class ListeningStatsTest {
         )
         val stats = listeningStats(rows, StatsRange.ALL, now, utc)
         assertEquals(400_000, stats.listenedMs)
-        assertEquals(4, stats.plays)
+        // Aimer's 10 s play is a skip: its time counts, the play doesn't.
+        assertEquals(3, stats.plays)
         assertEquals(listOf("RADWIMPS", "Aimer"), stats.artists.map { it.name })
         assertEquals(listOf(210_000L, 190_000L), stats.artists.map { it.listenedMs })
-        assertEquals(listOf(2, 2), stats.artists.map { it.plays })
+        assertEquals(listOf(2, 1), stats.artists.map { it.plays })
     }
 
     @Test
@@ -59,10 +60,24 @@ class ListeningStatsTest {
             play("s", "X", 2_000, now - 10_000) // started 10 s ago, may still be playing
         )
         val track = listeningStats(rows, StatsRange.ALL, now, utc).tracks.single()
-        assertEquals(5, track.plays)
+        // All but the 5 s skip: the old play and the one still going count too.
+        assertEquals(4, track.plays)
         assertEquals(1, track.finished)
         assertEquals(1, track.skipped)
         assertEquals(257_000, track.listenedMs)
+    }
+
+    @Test
+    fun `a song skipped a moment ago is judged once the next one starts`() {
+        val rows = listOf(
+            play("skipped", "X", 3_000, now - 20_000), // still within its length, but not the newest
+            play("playing", "X", 0, now - 15_000) // the song playing now; its time isn't saved yet
+        )
+        val tracks = listeningStats(rows, StatsRange.ALL, now, utc).tracks.associateBy { it.name }
+        assertEquals(0, tracks.getValue("skipped").plays)
+        assertEquals(1, tracks.getValue("skipped").skipped)
+        assertEquals(1, tracks.getValue("playing").plays)
+        assertEquals(0, tracks.getValue("playing").skipped)
     }
 
     @Test

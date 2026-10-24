@@ -395,7 +395,7 @@ private fun DetailPage(
 
     // TOTALS
     val share = if (d.allListenedMs > 0) "${s.listenedMs * 100 / d.allListenedMs}%" else "–"
-    val average = if (d.timedPlays > 0) formatListenTime(s.listenedMs / d.timedPlays) else "–"
+    val average = d.averagePlayMs?.let(::formatListenTime) ?: "–"
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         StatMetricCard(Icons.Default.Timer, "LISTENED", formatListenTime(s.listenedMs), accent, Modifier.weight(1f))
         StatMetricCard(Icons.Default.Headphones, "PLAYS", "${s.plays}", accent, Modifier.weight(1f))
@@ -415,7 +415,7 @@ private fun DetailPage(
     // FINISHED VS SKIPPED
     val finished = s.tracks.sumOf { it.finished }
     val skipped = s.tracks.sumOf { it.skipped }
-    val partly = (d.timedPlays - finished - skipped).coerceAtLeast(0)
+    val partly = (d.settledPlays - finished - skipped).coerceAtLeast(0)
     if (finished + skipped > 0) {
         StatsSection("FINISHED VS SKIPPED") {
             StatsPanel {

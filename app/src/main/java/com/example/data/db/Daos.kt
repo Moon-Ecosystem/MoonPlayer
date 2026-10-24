@@ -27,8 +27,9 @@ interface PlaylistDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertPlaylistTrack(track: PlaylistTrackEntity): Long
 
-    @Query("DELETE FROM playlist_tracks WHERE playlistId = :playlistId AND trackId = :trackId")
-    suspend fun removeTrackFromPlaylist(playlistId: Long, trackId: String)
+    /** Removes one entry; a song added to the playlist twice keeps its other copy. */
+    @Query("DELETE FROM playlist_tracks WHERE id = :rowId")
+    suspend fun removePlaylistRow(rowId: Long)
 
     @Query("DELETE FROM playlist_tracks WHERE playlistId = :playlistId")
     suspend fun clearPlaylist(playlistId: Long)

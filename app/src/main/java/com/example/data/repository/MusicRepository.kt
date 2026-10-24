@@ -517,8 +517,8 @@ class MusicRepository(private val context: Context) {
         )
     }
 
-    suspend fun removeTrackFromPlaylist(playlistId: Long, trackId: String) = withContext(Dispatchers.IO) {
-        playlistDao.removeTrackFromPlaylist(playlistId, trackId)
+    suspend fun removePlaylistRow(rowId: Long) = withContext(Dispatchers.IO) {
+        playlistDao.removePlaylistRow(rowId)
     }
 
     suspend fun reorderPlaylist(rowIdsInOrder: List<Long>) = withContext(Dispatchers.IO) {

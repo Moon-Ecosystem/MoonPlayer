@@ -44,8 +44,10 @@ data class StatsDetail(
     val allListenedMs: Long,
     val firstPlayed: Long?,
     val lastPlayed: Long?,
-    // Plays whose time is known (not recorded before time was tracked), for the average.
-    val timedPlays: Int
+    // Average time of the counted plays that have ended and have a known time; null if none.
+    val averagePlayMs: Long?,
+    // Plays judged finished, skipped or in between (ended, with known time and length).
+    val settledPlays: Int
 )
 
 fun detailStats(
@@ -64,14 +66,18 @@ fun detailStats(
             StatsKind.PLAYLIST -> it.playlist == key
         }
     }
+    // Judged across all plays: an older play of this artist ended when any later song started.
+    val ongoing = ongoingPlay(rows, now)
+    val averaged = mine.filter { it.listenedMs >= 0 && it != ongoing && !it.stoppedEarly() }
     return StatsDetail(
         kind = kind,
         key = key,
-        stats = listeningStats(mine, range, now, zone),
+        stats = listeningStats(mine, range, now, zone, ongoing),
         allListenedMs = rows.sumOf { it.listenedMs.coerceAtLeast(0L) },
         firstPlayed = mine.minOfOrNull { it.playedAt },
         lastPlayed = mine.maxOfOrNull { it.playedAt },
-        timedPlays = mine.count { it.listenedMs >= 0 }
+        averagePlayMs = averaged.takeIf { it.isNotEmpty() }?.let { plays -> plays.sumOf { it.listenedMs } / plays.size },
+        settledPlays = mine.count { it.settled(ongoing) }
     )
 }
 
@@ -93,41 +99,57 @@ data class ListeningStats(
 
 private const val SKIP_MS = 30_000L
 
+/** Stopped before 30 s, or before half of a shorter song. Plays with unknown time or length aren't. */
+private fun HistoryEntity.stoppedEarly() =
+    listenedMs >= 0 && durationMs > 0 && listenedMs < minOf(SKIP_MS, durationMs / 2)
+
+/** Whether the play can be judged finished or skipped: its time is known and it has ended. */
+private fun HistoryEntity.settled(ongoing: HistoryEntity?) = listenedMs >= 0 && durationMs > 0 && this != ongoing
+
+/**
+ * The play that may still be going: only the newest one can be, and only within its song's
+ * length. Every other play ended when the next one started.
+ */
+fun ongoingPlay(rows: List<HistoryEntity>, now: Long): HistoryEntity? =
+    rows.maxByOrNull { it.playedAt }?.takeIf { it.playedAt + it.durationMs > now }
+
 /**
  * Works out the stats page from the plays in the range. Time is what was actually played;
  * plays from before that was recorded (listenedMs -1) count as plays with no time.
  *
- * A play is finished at 80% of the song, and skipped when stopped before 30 s or half the song,
- * whichever is shorter. Plays that may still be going (started less than a song's length ago)
- * are left out of both, so the song playing now isn't counted as a skip.
+ * A play counts once it lasts 30 s, or half the song when that's shorter; anything less is a
+ * skip, so plays and skips don't overlap. Its time still counts. A play is finished at 80% of
+ * the song. The [ongoing] play counts as a play but isn't judged finished or skipped yet.
  */
 fun listeningStats(
     rows: List<HistoryEntity>,
     range: StatsRange,
     now: Long,
-    zone: TimeZone = TimeZone.getDefault()
+    zone: TimeZone = TimeZone.getDefault(),
+    ongoing: HistoryEntity? = ongoingPlay(rows, now)
 ): ListeningStats {
     fun HistoryEntity.time() = listenedMs.coerceAtLeast(0L)
+    fun HistoryEntity.counts() = this == ongoing || !stoppedEarly()
 
     // A play counts under each name [keys] gives it, e.g. every artist of a duet.
     fun rank(keys: (HistoryEntity) -> List<String?>, detail: (List<HistoryEntity>) -> String): List<Ranked> =
         rows.flatMap { play -> keys(play).filterNot { it.isNullOrBlank() }.map { it!! to play } }
             .groupBy({ it.first }, { it.second })
-            .map { (name, plays) -> Ranked(name, detail(plays), plays.size, plays.sumOf { it.time() }) }
+            .map { (name, plays) -> Ranked(name, detail(plays), plays.count { it.counts() }, plays.sumOf { it.time() }) }
             .sortedWith(compareByDescending<Ranked> { it.listenedMs }.thenByDescending { it.plays })
 
     fun mostCommon(plays: List<HistoryEntity>, field: (HistoryEntity) -> String) =
         plays.groupingBy(field).eachCount().maxByOrNull { it.value }?.key.orEmpty()
 
     val tracks = rows.groupBy { it.trackId }.map { (_, plays) ->
-        val known = plays.filter { it.listenedMs >= 0 && it.durationMs > 0 && it.playedAt + it.durationMs <= now }
+        val settled = plays.filter { it.settled(ongoing) }
         Ranked(
             name = plays.last().title,
             detail = plays.last().artist,
-            plays = plays.size,
+            plays = plays.count { it.counts() },
             listenedMs = plays.sumOf { it.time() },
-            finished = known.count { it.listenedMs >= it.durationMs * 8 / 10 },
-            skipped = known.count { it.listenedMs < minOf(SKIP_MS, it.durationMs / 2) },
+            finished = settled.count { it.listenedMs >= it.durationMs * 8 / 10 },
+            skipped = settled.count { it.stoppedEarly() },
             key = plays.last().trackId
         )
     }.sortedWith(compareByDescending<Ranked> { it.plays }.thenByDescending { it.listenedMs })
@@ -163,7 +185,7 @@ fun listeningStats(
     }
 
     return ListeningStats(
-        plays = rows.size,
+        plays = rows.count { it.counts() },
         listenedMs = rows.sumOf { it.time() },
         artists = rank({ splitArtists(it.artist) }) { "" },
         albums = rank({ listOf(it.album) }) { plays -> mostCommon(plays) { it.artist } },

@@ -648,7 +648,7 @@ fun PlaylistDetailScreen(
                             }
 
                             IconButton(
-                                onClick = { viewModel.removeTrackFromPlaylist(playlist.id, pt.trackId) },
+                                onClick = { viewModel.removePlaylistRow(pt.id) },
                                 modifier = Modifier.minimumInteractiveComponentSize()
                             ) {
                                 Icon(
