@@ -74,6 +74,7 @@ import com.example.ui.theme.TerminalBorder
 import com.example.ui.theme.TerminalRaisedPanel
 import com.example.ui.theme.TerminalSurfaceElevated
 import com.example.viewmodel.LibrarySortOrder
+import com.example.viewmodel.searchAndSort
 import com.example.viewmodel.MainViewModel
 import com.example.viewmodel.Screen
 
@@ -98,7 +99,9 @@ fun LibraryScreen(
     val folderAccessError by viewModel.folderAccessError.collectAsState()
     val accent = LocalAccentColor.current
 
-    val tracks = tracksOverride ?: filteredTracks
+    val tracks = if (tracksOverride == null) filteredTracks else remember(tracksOverride, searchQuery, sortOrder) {
+        searchAndSort(tracksOverride, searchQuery, sortOrder)
+    }
     val pickFolder = rememberFolderPicker { uri, flags ->
         viewModel.addFolder(uri, flags)
     }

@@ -20,6 +20,7 @@ import com.example.data.db.PlaylistEntity
 import com.example.data.db.PlaylistTrackEntity
 import com.example.data.db.QueueEntity
 import com.example.data.model.Track
+import com.example.ui.theme.MoonWhite
 import com.example.ui.theme.WarmIvory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -97,10 +98,11 @@ internal fun supportedAudioMime(name: String, mimeType: String): String? =
  * Palette's dominantSwatch is just the largest single cluster, so a flat one-shade backdrop
  * beats a subject spread over many shades (e.g. a blue sky vs. reds and pinks). Instead, sum
  * colourful swatches into 60° hue families weighted by saturation, take the strongest family,
- * and return its strongest swatch. Null when the cover has no colourful swatches (greys).
+ * and return its strongest swatch. Null when the cover is essentially grey: no colourful
+ * swatches, or so few that they're a detail (a character's hair on a black-and-white cover).
  */
 internal fun accentFromSwatches(swatches: List<Pair<Int, Int>>): Int? {
-    data class Scored(val rgb: Int, val family: Int, val weight: Float)
+    data class Scored(val rgb: Int, val family: Int, val weight: Float, val population: Int)
 
     val colourful = swatches.mapNotNull { (rgb, population) ->
         val r = (rgb shr 16 and 0xFF) / 255f
@@ -120,8 +122,10 @@ internal fun accentFromSwatches(swatches: List<Pair<Int, Int>>): Int? {
         }.let { if (it < 0) it + 360 else it }
         // Families centred on red (0°), yellow, green, cyan, blue, magenta; red wraps around 360°.
         val family = (((hue + 30) / 60).toInt()) % 6
-        Scored(rgb, family, population * saturation)
+        Scored(rgb, family, population * saturation, population)
     }
+    // Under 5% colour reads as a black-and-white cover, not as that colour.
+    if (colourful.sumOf { it.population } < 0.05 * swatches.sumOf { it.second }) return null
     val bestFamily = colourful.groupBy { it.family }
         .maxByOrNull { (_, members) -> members.sumOf { it.weight.toDouble() } }
         ?.value ?: return null
@@ -235,10 +239,25 @@ class MusicRepository(private val context: Context) {
                 trackId = track.id,
                 title = track.title,
                 artist = track.artist,
-                album = track.album,
-                durationMs = track.durationMs
+                album = track.album
             )
-            playlist?.let { trackStatDao.recordPlaylistPlay(it, track.durationMs) }
+            playlist?.let { trackStatDao.recordPlaylistPlay(it) }
+        }
+    }
+
+    /** Wipes listening stats and play history; playlists, favourites and the library stay. */
+    suspend fun resetStats() = withContext(Dispatchers.IO) {
+        trackStatDao.clearTrackStats()
+        trackStatDao.clearPlaylistStats()
+        historyDao.clearHistory()
+    }
+
+    /** Adds [ms] of actual playing time to the song's stats, and to [playlist]'s if it was played from one. */
+    suspend fun addListenTime(trackId: String, playlist: String?, ms: Long) {
+        if (ms <= 0) return
+        withContext(Dispatchers.IO) {
+            trackStatDao.addListenTime(trackId, ms)
+            playlist?.let { trackStatDao.addPlaylistListenTime(it, ms) }
         }
     }
 
@@ -484,7 +503,7 @@ class MusicRepository(private val context: Context) {
     }
 
     suspend fun deletePlaylist(id: Long) = withContext(Dispatchers.IO) {
-        playlistDao.deletePlaylist(id)
+        playlistDao.deletePlaylistAndTracks(id)
     }
 
     suspend fun addTrackToPlaylist(playlistId: Long, track: Track) = withContext(Dispatchers.IO) {
@@ -550,11 +569,6 @@ class MusicRepository(private val context: Context) {
         val extractedColor: Color = if (bitmap != null) {
             val palette = Palette.from(bitmap!!).generate()
             val rgb = accentFromSwatches(palette.swatches.map { it.rgb to it.population })
-                ?: (palette.dominantSwatch
-                    ?: palette.vibrantSwatch
-                    ?: palette.lightVibrantSwatch
-                    ?: palette.mutedSwatch
-                    ?: palette.lightMutedSwatch)?.rgb
 
             if (rgb != null) {
                 // Ensure contrast against dark terminal #121212 background (luminance > 0.35)
@@ -565,7 +579,8 @@ class MusicRepository(private val context: Context) {
                 }
                 Color(ColorUtils.HSLToColor(hsl))
             } else {
-                WarmIvory
+                // A black-and-white or grey cover gets a white accent, not a colour it barely has.
+                MoonWhite
             }
         } else {
             WarmIvory

@@ -21,7 +21,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     ],
     // Version 4 is the first schema with real user data. Any bump from here needs a Migration
     // added to the builder below; only the pre-release versions 1-3 may be wiped.
-    version = 8,
+    version = 9,
     exportSchema = false
 )
 abstract class MoonPlayerDatabase : RoomDatabase() {
@@ -75,6 +75,13 @@ abstract class MoonPlayerDatabase : RoomDatabase() {
             }
         }
 
+        // Deleting a playlist used to leave its songs in playlist_tracks; drop those leftovers.
+        val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("DELETE FROM `playlist_tracks` WHERE `playlistId` NOT IN (SELECT `id` FROM `playlists`)")
+            }
+        }
+
         @Volatile
         private var INSTANCE: MoonPlayerDatabase? = null
 
@@ -88,7 +95,7 @@ abstract class MoonPlayerDatabase : RoomDatabase() {
                     // A missing migration now crashes on upgrade instead of silently deleting
                     // playlists, favourites and stats.
                     .fallbackToDestructiveMigrationFrom(dropAllTables = true, 1, 2, 3)
-                    .addMigrations(MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
+                    .addMigrations(MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
                     .build()
                 INSTANCE = instance
                 instance

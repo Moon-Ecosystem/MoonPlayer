@@ -18,13 +18,18 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Equalizer
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PieChart
 import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -35,7 +40,9 @@ import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -71,6 +78,7 @@ fun StatsScreen(
     val allTracks by viewModel.allTracks.collectAsState()
     val favoriteIds by viewModel.favoriteTrackIds.collectAsState()
     val accent = LocalAccentColor.current
+    var showResetDialog by remember { mutableStateOf(false) }
 
     val totalTimeFormatted = remember(totalListenTimeMs) {
         val ms = totalListenTimeMs ?: 0L
@@ -115,6 +123,48 @@ fun StatsScreen(
                     fontFamily = FontFamily.Monospace
                 )
             }
+            Spacer(modifier = Modifier.weight(1f))
+            IconButton(onClick = { showResetDialog = true }, modifier = Modifier.minimumInteractiveComponentSize()) {
+                Icon(imageVector = Icons.Default.DeleteSweep, contentDescription = "Reset stats", tint = MutedText)
+            }
+        }
+
+        if (showResetDialog) {
+            AlertDialog(
+                onDismissRequest = { showResetDialog = false },
+                title = { Text("Reset stats?", color = PrimaryText) },
+                text = {
+                    Text(
+                        "Clears listening time, play counts, top tracks, top playlists and Recently Played. " +
+                            "Playlists, favourites and your library aren't touched. This can't be undone.",
+                        color = SecondaryText
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            viewModel.resetStats()
+                            showResetDialog = false
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = accent,
+                            contentColor = com.example.ui.theme.buttonContentColorFor(accent)
+                        )
+                    ) {
+                        Text("Reset", fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    OutlinedButton(
+                        onClick = { showResetDialog = false },
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = PrimaryText),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, TerminalBorder)
+                    ) {
+                        Text("Cancel")
+                    }
+                },
+                containerColor = TerminalSurfaceElevated
+            )
         }
 
         Spacer(modifier = Modifier.height(16.dp))
