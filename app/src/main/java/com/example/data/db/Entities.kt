@@ -48,7 +48,8 @@ data class LibraryTrackEntity(
     val dateAdded: Long,
     val mimeType: String,
     val bitrateKbps: Int,
-    val sampleRateHz: Int
+    val sampleRateHz: Int,
+    val albumArtUri: String? = null
 )
 
 @Entity(tableName = "favorites")

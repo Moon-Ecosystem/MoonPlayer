@@ -155,6 +155,19 @@ fun formatBreakdown(tracks: List<Track>): List<Pair<String, Int>> =
         .toList()
         .sortedByDescending { it.second }
 
+/**
+ * The folder's cover image among its image file names, e.g. "Cover.jpg" or "folder.png", for
+ * songs without embedded artwork. Names earlier in the list win; other images are ignored.
+ */
+fun pickCoverFile(names: Collection<String>): String? {
+    val covers = names.filter {
+        it.substringAfterLast('.').lowercase() in setOf("jpg", "jpeg", "png", "webp")
+    }
+    return listOf("cover", "folder", "front", "album", "albumart").firstNotNullOfOrNull { base ->
+        covers.firstOrNull { it.substringBeforeLast('.').equals(base, ignoreCase = true) }
+    }
+}
+
 class MusicRepository(private val context: Context) {
 
     private companion object {
@@ -257,6 +270,9 @@ class MusicRepository(private val context: Context) {
                     val mimeIdx = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE)
                     val modIdx = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
                     if (idIdx < 0 || nameIdx < 0 || mimeIdx < 0) return@use
+                    // A cover image applies to the songs beside it, and may be listed after them.
+                    val dirTracks = mutableListOf<Track>()
+                    val images = mutableMapOf<String, String>()
 
                     while (cursor.moveToNext()) {
                         val childDocId = cursor.getString(idIdx) ?: continue
@@ -274,14 +290,20 @@ class MusicRepository(private val context: Context) {
                                 val lastModified = if (modIdx >= 0) cursor.getLong(modIdx) else 0L
                                 val cached = known[folderTrackId(childDocId)]
                                     ?.takeIf { lastModified != 0L && it.dateAdded == lastModified }
-                                tracks.add(
+                                dirTracks.add(
                                     cached ?: readFolderTrack(
                                         treeUri, childDocId, name, audioMime, lastModified, folderName
                                     )
                                 )
+                            } else if (mime.startsWith("image/")) {
+                                images[name] = childDocId
                             }
                         }
                     }
+                    val cover = pickCoverFile(images.keys)?.let {
+                        DocumentsContract.buildDocumentUriUsingTree(treeUri, images.getValue(it)).toString()
+                    }
+                    dirTracks.mapTo(tracks) { it.copy(albumArtUri = cover) }
                 }
             }
 
@@ -403,7 +425,8 @@ class MusicRepository(private val context: Context) {
                     dateAdded = it.dateAdded,
                     mimeType = it.mimeType,
                     bitrateKbps = it.bitrateKbps,
-                    sampleRateHz = it.sampleRateHz
+                    sampleRateHz = it.sampleRateHz,
+                    albumArtUri = it.albumArtUri
                 )
             })
         }
@@ -424,7 +447,8 @@ class MusicRepository(private val context: Context) {
                     dateAdded = it.dateAdded,
                     mimeType = it.mimeType,
                     bitrateKbps = it.bitrateKbps,
-                    sampleRateHz = it.sampleRateHz
+                    sampleRateHz = it.sampleRateHz,
+                    albumArtUri = it.albumArtUri
                 )
             }
         }
@@ -497,13 +521,9 @@ class MusicRepository(private val context: Context) {
         accentColorCache[track.id]?.let { return@withContext it }
 
         var bitmap: Bitmap? = null
+        // Same order as the artwork shown: embedded art first, then the folder's cover image.
         try {
-            if (track.albumArtUri != null) {
-                val uri = Uri.parse(track.albumArtUri)
-                bitmap = decodeSampled { opts ->
-                    context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
-                }
-            } else if (track.contentUri.startsWith("content://")) {
+            if (track.contentUri.startsWith("content://")) {
                 val mmr = MediaMetadataRetriever()
                 try {
                     mmr.setDataSource(context, Uri.parse(track.contentUri))
@@ -515,6 +535,14 @@ class MusicRepository(private val context: Context) {
                     }
                 } finally {
                     mmr.release()
+                }
+            }
+        } catch (_: Exception) {}
+        try {
+            if (bitmap == null && track.albumArtUri != null) {
+                val uri = Uri.parse(track.albumArtUri)
+                bitmap = decodeSampled { opts ->
+                    context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
                 }
             }
         } catch (_: Exception) {}
