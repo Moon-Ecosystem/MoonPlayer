@@ -53,6 +53,7 @@ import com.example.R
 import com.example.data.settings.AccentMode
 import com.example.ui.theme.CelestialCyan
 import com.example.ui.theme.LocalAccentColor
+import com.example.ui.theme.MoonWhite
 import com.example.ui.theme.MutedText
 import com.example.ui.theme.PrimaryText
 import com.example.ui.theme.SecondaryText
@@ -125,7 +126,8 @@ fun SettingsScreen(
             Triple(AccentMode.WARM_IVORY, "Warm Ivory (Default)", WarmIvory),
             Triple(AccentMode.TERMINAL_GREEN, "Terminal Emerald", TerminalGreen),
             Triple(AccentMode.AMBER_GLOW, "Amber Glow", TerminalAmber),
-            Triple(AccentMode.CYAN_PULSE, "Celestial Cyan", CelestialCyan)
+            Triple(AccentMode.CYAN_PULSE, "Celestial Cyan", CelestialCyan),
+            Triple(AccentMode.MOON_WHITE, "Moon White", MoonWhite)
         ) + listOfNotNull(
             // Wallpaper colours only exist on Android 12+.
             Triple(AccentMode.SYSTEM, "System (Wallpaper)", viewModel.systemAccentColor())

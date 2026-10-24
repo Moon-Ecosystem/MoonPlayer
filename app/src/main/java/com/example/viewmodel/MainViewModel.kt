@@ -28,6 +28,7 @@ import com.example.data.settings.PlayerSettings
 import com.example.data.settings.SettingsManager
 import com.example.service.PlaybackService
 import com.example.ui.theme.CelestialCyan
+import com.example.ui.theme.MoonWhite
 import com.example.ui.theme.NeonCoral
 import com.example.ui.theme.TerminalAmber
 import com.example.ui.theme.TerminalGreen
@@ -536,6 +537,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     AccentMode.TERMINAL_GREEN -> _activeAccentColor.value = TerminalGreen
                     AccentMode.AMBER_GLOW -> _activeAccentColor.value = TerminalAmber
                     AccentMode.CYAN_PULSE -> _activeAccentColor.value = CelestialCyan
+                    AccentMode.MOON_WHITE -> _activeAccentColor.value = MoonWhite
                     AccentMode.SYSTEM -> _activeAccentColor.value = systemAccentColor()
                 }
             }

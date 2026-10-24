@@ -22,6 +22,7 @@ val TerminalAmber = Color(0xFFE5A855)
 val CelestialCyan = Color(0xFF70C4E8)
 val NeonCoral = Color(0xFFE87A65)
 val VioletGlow = Color(0xFFB88EE8)
+val MoonWhite = Color(0xFFFFFFFF)
 
 /**
  * Black or white, whichever contrasts more with [backgroundColor] (WCAG contrast ratio).
