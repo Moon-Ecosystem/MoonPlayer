@@ -43,8 +43,8 @@ fun PlayerQueuePager(
         state = pagerState,
         // Keep the other page composed so the first swipe doesn't stutter while it builds.
         beyondViewportPageCount = 1,
-        // A short drag (a tenth of the screen) is enough to switch; the default needs half.
-        flingBehavior = PagerDefaults.flingBehavior(state = pagerState, snapPositionalThreshold = 0.1f),
+        // A short drag (15% of the screen) is enough to switch; the default needs half.
+        flingBehavior = PagerDefaults.flingBehavior(state = pagerState, snapPositionalThreshold = 0.15f),
         modifier = Modifier.fillMaxSize()
     ) { page ->
         if (page == queuePage) {
