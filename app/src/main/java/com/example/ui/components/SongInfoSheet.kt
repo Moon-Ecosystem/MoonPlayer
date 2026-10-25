@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -67,7 +68,8 @@ fun SongInfoSheet(viewModel: MainViewModel, track: Track, badge: String, onDismi
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = TerminalRaisedPanel,
-        modifier = Modifier.testTag("song_info_sheet")
+        // Fully open, the sheet stops under the clock instead of sliding behind it.
+        modifier = Modifier.statusBarsPadding().testTag("song_info_sheet")
     ) {
         LazyColumn(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),

@@ -74,10 +74,13 @@ fun NavigationDrawerContent(
     val quickPlaylists by viewModel.quickPlaylists.collectAsState()
     val playlistRows by viewModel.playlistRows.collectAsState()
     val folderPlaylists by viewModel.folderPlaylists.collectAsState()
+    val isPlaying by viewModel.isPlaying.collectAsState()
     val accent = LocalAccentColor.current
 
     Surface(
+        // The panel itself, not just its contents, stays clear of the clock and the gesture bar.
         modifier = modifier
+            .safeDrawingPadding()
             .fillMaxHeight()
             .width(300.dp),
         color = TerminalRaisedPanel,
@@ -86,7 +89,6 @@ fun NavigationDrawerContent(
         Column(
             modifier = Modifier
                 .fillMaxHeight()
-                .safeDrawingPadding()
                 .verticalScroll(rememberScrollState())
                 .padding(vertical = 20.dp, horizontal = 16.dp)
         ) {
@@ -155,7 +157,8 @@ fun NavigationDrawerContent(
                     item,
                     item.playlist?.let { playlistRows[it.id] }.orEmpty(),
                     if (item.playlist == null) folderPlaylists.firstOrNull { it.first == item.name }?.second.orEmpty() else emptyList(),
-                    accent
+                    accent,
+                    isPlaying
                 ) {
                     item.playlist?.let { viewModel.openPlaylist(it) } ?: viewModel.openFolderPlaylist(item.name)
                     onCloseDrawer()
@@ -296,6 +299,7 @@ private fun QuickPlaylistRow(
     rows: List<com.example.data.db.PlaylistTrackEntity>,
     folderTracks: List<com.example.data.model.Track>,
     accent: androidx.compose.ui.graphics.Color,
+    isPlaying: Boolean,
     onClick: () -> Unit
 ) {
     Row(
@@ -320,7 +324,7 @@ private fun QuickPlaylistRow(
                 text = item.name,
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
-                color = PrimaryText,
+                color = if (item.playing) accent else PrimaryText,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
@@ -334,6 +338,7 @@ private fun QuickPlaylistRow(
                 color = if (item.playing) accent else MutedText
             )
         }
+        if (item.playing && isPlaying) EqualizerWaveIndicator(accent, Modifier.padding(start = 8.dp))
     }
 }
 

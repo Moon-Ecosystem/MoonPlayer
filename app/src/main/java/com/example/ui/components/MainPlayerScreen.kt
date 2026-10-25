@@ -1,6 +1,7 @@
 package com.example.ui.components
 
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -20,6 +21,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -70,10 +73,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.SpanStyle
@@ -324,7 +331,9 @@ fun MainPlayerScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.weight(1f).heightIn(min = 4.dp))
+            // This gap, the one under the cover and the one above Up next stretch equally, so the
+            // cover has the same space above and below; title, seek bar and controls stay together.
+            Spacer(modifier = Modifier.weight(1f).heightIn(min = 12.dp))
 
             // 2. SQUARE ALBUM COVER: full content width, unless the screen is too short for that
             // plus the ~400dp of title, seek bar, controls and Up next below it.
@@ -397,7 +406,8 @@ fun MainPlayerScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.weight(1f).heightIn(min = 10.dp))
+            // 8 + the slider's 24dp half-height puts the line 32dp under the title.
+            Spacer(modifier = Modifier.height(8.dp))
 
             // 4. SEEK BAR WITH ELAPSED AND TOTAL/REMAINING TIME, the file's format between them.
             // With the setting on, the ⓘ marks the format as the song info button. A missing
@@ -419,7 +429,8 @@ fun MainPlayerScreen(
                                 .testTag("song_info_badge")
                             else Modifier
                         )
-                        .padding(start = 8.dp, end = 8.dp, bottom = 16.dp)
+                        // 48dp tall with the text; the time row hides the extra from the layout.
+                        .padding(start = 8.dp, end = 8.dp, bottom = 32.dp)
                 ) {
                     Text(
                         text = if (fileMissing) "FILE NOT FOUND" else techText,
@@ -438,7 +449,7 @@ fun MainPlayerScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(6.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
             // 5. CONTROLS: Shuffle, Previous, Play/Pause, Next, Repeat
             Row(
@@ -634,6 +645,7 @@ private fun TrackTitleBlock(track: Track, accent: Color, modifier: Modifier = Mo
 }
 
 // Isolated so the 200ms position ticks recompose only the seek bar, not the whole player.
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SeekBarSection(
     viewModel: MainViewModel,
@@ -668,11 +680,44 @@ private fun SeekBarSection(
                 viewModel.seekTo(dragPositionMs.toLong())
                 isDraggingSlider = false
             },
-            colors = SliderDefaults.colors(
-                thumbColor = accent,
-                activeTrackColor = accent,
-                inactiveTrackColor = TerminalBorder
-            ),
+            // A thin line with a vertical handle; dragging thickens both and shows the target time.
+            thumb = {
+                Box(
+                    modifier = Modifier
+                        .size(width = 4.dp, height = if (isDraggingSlider) 34.dp else 22.dp)
+                        .background(accent, RoundedCornerShape(2.dp))
+                ) {
+                    if (isDraggingSlider) Text(
+                        text = Track.formatDuration(activePositionMs),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = PrimaryText,
+                        fontFamily = FontFamily.Monospace,
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .wrapContentWidth(unbounded = true)
+                            .offset(y = (-30).dp)
+                            .background(TerminalRaisedPanel, RoundedCornerShape(11.dp))
+                            .border(1.dp, TerminalBorder, RoundedCornerShape(11.dp))
+                            .padding(horizontal = 10.dp, vertical = 3.dp)
+                    )
+                }
+            },
+            track = {
+                val line = if (isDraggingSlider) 6.dp else 4.dp
+                Canvas(modifier = Modifier.fillMaxWidth().height(line)) {
+                    // The track spans the thumb centre's travel, so x is where the handle sits.
+                    val x = sliderValue * size.width
+                    val gap = 5.dp.toPx()
+                    val r = CornerRadius(size.height / 2)
+                    if (x - gap > 0f) drawRoundRect(accent, size = Size(x - gap, size.height), cornerRadius = r)
+                    if (x + gap < size.width) drawRoundRect(
+                        TerminalBorder,
+                        topLeft = Offset(x + gap, 0f),
+                        size = Size(size.width - x - gap, size.height),
+                        cornerRadius = r
+                    )
+                }
+            },
             modifier = Modifier
                 .fillMaxWidth()
                 .testTag("player_seek_slider")
@@ -681,7 +726,16 @@ private fun SeekBarSection(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 6.dp),
+                // The slider's 48dp touch height leaves empty space under the thin line; tuck into it.
+                // The format's tap area reaches 16dp further down, over the gap above the controls,
+                // without pushing them down.
+                .layout { measurable, constraints ->
+                    val placeable = measurable.measure(constraints)
+                    val up = 8.dp.roundToPx()
+                    val overhang = 16.dp.roundToPx()
+                    layout(placeable.width, (placeable.height - up - overhang).coerceAtLeast(0)) { placeable.place(0, -up) }
+                },
+            // No side padding: the times line up with the title's left edge.
             horizontalArrangement = Arrangement.SpaceBetween,
             // Top: the format's tap area below the text mustn't push the times down.
             verticalAlignment = Alignment.Top
@@ -689,7 +743,7 @@ private fun SeekBarSection(
             Text(
                 text = Track.formatDuration(activePositionMs),
                 style = MaterialTheme.typography.labelSmall,
-                color = MutedText,
+                color = accent,
                 fontFamily = FontFamily.Monospace
             )
 
