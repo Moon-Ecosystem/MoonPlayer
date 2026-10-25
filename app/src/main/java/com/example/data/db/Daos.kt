@@ -18,6 +18,13 @@ interface PlaylistDao {
     @Query("UPDATE playlists SET name = :name, updatedAt = :updatedAt WHERE id = :id")
     suspend fun renamePlaylist(id: Long, name: String, updatedAt: Long = System.currentTimeMillis())
 
+    @Query("UPDATE playlists SET name = :name, description = :description, coverUri = :coverUri, eqPreset = :eqPreset, updatedAt = :updatedAt WHERE id = :id")
+    suspend fun updateDetails(id: Long, name: String, description: String, coverUri: String?, eqPreset: String?, updatedAt: Long = System.currentTimeMillis())
+
+    /** Every playlist's songs in order, for the covers on the Playlists list. */
+    @Query("SELECT * FROM playlist_tracks ORDER BY playlistId, sortOrder ASC")
+    fun getAllPlaylistTracks(): Flow<List<PlaylistTrackEntity>>
+
     @Query("DELETE FROM playlists WHERE id = :id")
     suspend fun deletePlaylist(id: Long)
 

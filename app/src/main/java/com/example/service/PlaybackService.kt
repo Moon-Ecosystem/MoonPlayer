@@ -10,6 +10,7 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -19,6 +20,7 @@ import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.example.MainActivity
 import com.example.R
+import com.example.data.fileExists
 import com.example.data.model.Track
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -28,6 +30,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class PlaybackService : MediaSessionService() {
 
@@ -82,6 +85,10 @@ class PlaybackService : MediaSessionService() {
 
     private val _abLoopEndMs = MutableStateFlow<Long?>(null)
     val abLoopEndMs = _abLoopEndMs.asStateFlow()
+
+    // The current song's file couldn't be opened because it's gone (moved, renamed or deleted).
+    private val _currentFileMissing = MutableStateFlow(false)
+    val currentFileMissing = _currentFileMissing.asStateFlow()
 
     inner class LocalBinder : Binder() {
         fun getService(): PlaybackService = this@PlaybackService
@@ -165,10 +172,21 @@ class PlaybackService : MediaSessionService() {
                     _durationMs.value = currentQ[index].durationMs
                 }
                 _currentPositionMs.value = 0L
+                _currentFileMissing.value = false
 
                 // Reset A-B loop on song change
                 _abLoopStartMs.value = null
                 _abLoopEndMs.value = null
+            }
+
+            // Media3 reports a gone file on a folder URI as a generic I/O error, so ask the provider.
+            override fun onPlayerError(error: PlaybackException) {
+                val uri = player.currentMediaItem?.localConfiguration?.uri ?: return
+                if (error.errorCode !in 2000..2999) return // ERROR_CODE_IO_*
+                serviceScope.launch {
+                    val missing = withContext(Dispatchers.IO) { !fileExists(this@PlaybackService, uri) }
+                    if (player.currentMediaItem?.localConfiguration?.uri == uri) _currentFileMissing.value = missing
+                }
             }
 
             override fun onRepeatModeChanged(newRepeatMode: Int) {
@@ -276,6 +294,8 @@ class PlaybackService : MediaSessionService() {
             player.removeMediaItem(index)
             // Removing an earlier song shifts the playing one without a media-item transition.
             _currentIndex.value = player.currentMediaItemIndex
+            // The last song gone: nothing is loaded, so show nothing rather than the removed song.
+            if (currentQ.isEmpty()) clearQueue()
         }
     }
 
@@ -297,6 +317,8 @@ class PlaybackService : MediaSessionService() {
         _currentTrack.value = null
         _currentIndex.value = -1
         _currentPositionMs.value = 0L
+        _durationMs.value = 0L
+        _currentFileMissing.value = false
     }
 
     fun togglePlayPause() {

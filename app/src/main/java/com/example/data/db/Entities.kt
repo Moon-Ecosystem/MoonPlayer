@@ -11,7 +11,13 @@ data class PlaylistEntity(
     val id: Long = 0,
     val name: String,
     val createdAt: Long = System.currentTimeMillis(),
-    val updatedAt: Long = System.currentTimeMillis()
+    val updatedAt: Long = System.currentTimeMillis(),
+    @ColumnInfo(defaultValue = "")
+    val description: String = "",
+    // null: the first songs' covers; a file: URI: a photo copied into the app; else a song's URI.
+    val coverUri: String? = null,
+    // Equalizer preset used while playing from this playlist; null: the usual one.
+    val eqPreset: String? = null
 )
 
 /** Result row of [PlaylistDao.getTrackCounts]. */

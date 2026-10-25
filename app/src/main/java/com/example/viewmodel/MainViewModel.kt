@@ -26,6 +26,9 @@ import com.example.data.repository.pickQuickPlaylists
 import com.example.data.settings.AccentMode
 import com.example.data.settings.PlayerSettings
 import com.example.data.settings.SettingsManager
+import com.example.data.InfoSection
+import com.example.data.SongInfo
+import com.example.data.readSongInfo
 import com.example.data.stats.ListeningStats
 import com.example.data.stats.StatsDetail
 import com.example.data.stats.StatsKind
@@ -47,6 +50,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.shareIn
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -89,7 +93,8 @@ fun searchAndSort(tracks: List<Track>, query: String, sort: LibrarySortOrder): L
     return when (sort) {
         LibrarySortOrder.TITLE_ASC -> found.sortedBy { it.title.lowercase() }
         LibrarySortOrder.ARTIST_ASC -> found.sortedBy { it.artist.lowercase() }
-        LibrarySortOrder.ALBUM_ASC -> found.sortedBy { it.album.lowercase() }
+        // Within an album, in track order.
+        LibrarySortOrder.ALBUM_ASC -> found.sortedWith(compareBy({ it.album.lowercase() }, { it.trackNumber }))
         LibrarySortOrder.DURATION_DESC -> found.sortedByDescending { it.durationMs }
         LibrarySortOrder.DATE_ADDED_DESC -> found.sortedByDescending { it.dateAdded }
     }
@@ -127,12 +132,12 @@ class ListenTimer(private val now: () -> Long) {
     }
 }
 
-enum class LibrarySortOrder {
-    TITLE_ASC,
-    ARTIST_ASC,
-    ALBUM_ASC,
-    DURATION_DESC,
-    DATE_ADDED_DESC
+enum class LibrarySortOrder(val label: String) {
+    TITLE_ASC("Title (A-Z)"),
+    ARTIST_ASC("Artist (A-Z)"),
+    ALBUM_ASC("Album (A-Z)"),
+    DURATION_DESC("Duration (Longest first)"),
+    DATE_ADDED_DESC("Date Added (Newest)")
 }
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -230,6 +235,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         SharingStarted.WhileSubscribed(5000),
         emptyList()
     )
+    /** Songs of each of your playlists in order, by playlist id (for covers on the list). */
+    val playlistRows: StateFlow<Map<Long, List<PlaylistTrackEntity>>> = repository.allPlaylistTracks
+        .map { rows -> rows.groupBy { it.playlistId } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
     val playHistory = repository.playHistory.stateIn(
         viewModelScope,
         SharingStarted.WhileSubscribed(5000),
@@ -351,6 +360,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // Playlist (user or folder) the current queue came from, credited in playlist stats
     private var playingPlaylist: String? = null
 
+    // Your playlist the queue came from, for its own equalizer preset.
+    private val _playingPlaylistId = MutableStateFlow<Long?>(null)
+
     // Listening time goes to the song (and playlist) that was playing, saved on pause and on song change.
     private val listenTimer = ListenTimer { android.os.SystemClock.elapsedRealtime() }
     private var listenTrackId: String? = null
@@ -391,6 +403,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _isStopAtEndActive = MutableStateFlow(false)
     val isStopAtEndActive = _isStopAtEndActive.asStateFlow()
 
+    private val _currentFileMissing = MutableStateFlow(false)
+    val currentFileMissing = _currentFileMissing.asStateFlow()
+
     private val _abLoopStartMs = MutableStateFlow<Long?>(null)
     val abLoopStartMs = _abLoopStartMs.asStateFlow()
 
@@ -429,6 +444,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // Open lyrics follow the song.
         viewModelScope.launch {
             _currentTrack.map { it?.id }.distinctUntilChanged().collect { if (_lyricsOpen.value) loadLyrics() }
+        }
+        // A rescan that finishes after the song loaded (e.g. at launch) refreshes its details.
+        viewModelScope.launch {
+            allTracks.collect { library ->
+                val current = _currentTrack.value ?: return@collect
+                library.firstOrNull { it.id == current.id }?.takeIf { it != current }?.let { _currentTrack.value = it }
+            }
         }
     }
 
@@ -606,6 +628,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch {
             service.abLoopEndMs.collect { _abLoopEndMs.value = it }
+        }
+        viewModelScope.launch {
+            service.currentFileMissing.collect { _currentFileMissing.value = it }
+        }
+        // The playing playlist's own preset, else the usual one; also restores it at launch.
+        // Applied only when it changes, so hand-moved bands stay until then.
+        viewModelScope.launch {
+            combine(_playingPlaylistId, repository.allPlaylists, settingsManager.settingsFlow) { id, playlists, settings ->
+                playlists.firstOrNull { it.id == id }?.eqPreset ?: settings.equalizerPreset
+            }.distinctUntilChanged().collect { service.equalizerHelper.applyPreset(it) }
         }
     }
 
@@ -826,9 +858,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** [source] names where playback started (playlist, folder, album...) for the player header. */
-    fun playTrackList(tracks: List<Track>, startIndex: Int, source: String, isPlaylist: Boolean = false) {
+    fun playTrackList(tracks: List<Track>, startIndex: Int, source: String, isPlaylist: Boolean = false, playlistId: Long? = null) {
         _playingFrom.value = source
         playingPlaylist = source.takeIf { isPlaylist }
+        _playingPlaylistId.value = playlistId
         playbackService?.playTrackList(tracks, startIndex)
     }
 
@@ -939,8 +972,46 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Saves name, description, cover and equalizer; [photo] is a newly picked cover image. */
+    fun updatePlaylistDetails(old: PlaylistEntity, new: PlaylistEntity, photo: android.net.Uri?) {
+        if (new.name.isBlank()) return
+        viewModelScope.launch { repository.updatePlaylistDetails(old, new, photo) }
+    }
+
+    /** A song list page's remembered sort, keyed like "ALBUM:Milk"; null keeps its own order. */
+    fun listSort(page: String): Flow<LibrarySortOrder?> =
+        settingsManager.listSort(page).map { saved -> LibrarySortOrder.entries.firstOrNull { it.name == saved } }
+
+    fun setListSort(page: String, sort: LibrarySortOrder?) {
+        viewModelScope.launch { settingsManager.setListSort(page, sort?.name) }
+    }
+
+    /**
+     * Copies a folder, album, artist... in its shown order into a new playlist of yours and opens
+     * it; a song listed twice (Recently Played) goes in once. The name avoids every existing
+     * playlist and folder name, which the drawer tells apart by name.
+     */
+    fun saveAsPlaylist(source: String, tracks: List<Track>) {
+        viewModelScope.launch {
+            val taken = allPlaylists.value.map { it.name }.toSet() + folderPlaylists.value.map { it.first }
+            val name = generateSequence(1) { it + 1 }
+                .map { n -> if (n == 1) "$source (copy)" else "$source (copy $n)" }
+                .first { it !in taken }
+            val id = repository.createPlaylist(name)
+            tracks.distinctBy { it.id }.forEach { repository.addTrackToPlaylist(id, it) }
+            _openFolderPlaylist.value = null
+            openPlaylist(PlaylistEntity(id = id, name = name))
+        }
+    }
+
+    /** Appends [tracks] in order (the + screen's picks). */
+    fun addTracksToPlaylist(playlistId: Long, tracks: List<Track>) {
+        viewModelScope.launch { tracks.forEach { repository.addTrackToPlaylist(playlistId, it) } }
+    }
+
     fun deletePlaylist(id: Long) {
         viewModelScope.launch {
+            repository.deletePlaylistPhoto(allPlaylists.value.firstOrNull { it.id == id }?.coverUri)
             repository.deletePlaylist(id)
             if (_selectedPlaylist.value?.id == id) {
                 _currentScreen.value = Screen.PLAYLISTS
@@ -1012,6 +1083,37 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             settingsManager.setShowRemainingTime(show)
         }
+    }
+
+    fun setBadgeOpensSongInfo(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsManager.setBadgeOpensSongInfo(enabled)
+        }
+    }
+
+    /** The song info sheet: the file's own details, then its plays in Moon Player. */
+    suspend fun songInfo(track: Track): SongInfo {
+        val info = readSongInfo(getApplication(), track)
+        val history = repository.historySince(0L).first()
+        val played = detailStats(history, StatsKind.TRACK, track.id, StatsRange.ALL, System.currentTimeMillis())
+        val stats = played.stats.tracks.firstOrNull() ?: return info
+        val minutes = stats.listenedMs / 60_000
+        return info.copy(sections = info.sections + InfoSection(
+            "IN MOON PLAYER",
+            listOfNotNull(
+                "Plays" to "${stats.plays} · ${if (minutes >= 60) "${minutes / 60}h ${minutes % 60}m" else "${minutes}m"} listened",
+                "Finished" to "${stats.finished} · skipped ${stats.skipped}",
+                played.lastPlayed?.let {
+                    "Last played" to java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT).format(java.util.Date(it))
+                }
+            )
+        ))
+    }
+
+    /** Drops the song now loaded from the queue, e.g. when its file is gone. */
+    fun removeCurrentFromQueue() {
+        val index = _currentIndex.value
+        if (index >= 0) removeFromQueue(index)
     }
 
     fun setResumeOnLaunch(resume: Boolean) {

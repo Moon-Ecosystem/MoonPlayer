@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -23,7 +25,6 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
 import androidx.activity.compose.BackHandler
-import androidx.compose.material.icons.filled.Folder
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -31,6 +32,10 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DriveFolderUpload
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlaylistPlay
 import androidx.compose.material.icons.filled.QueueMusic
@@ -74,7 +79,10 @@ import com.example.ui.theme.TerminalBorder
 import com.example.ui.theme.TerminalRaisedPanel
 import com.example.ui.theme.TerminalSurfaceElevated
 import com.example.viewmodel.MainViewModel
+import com.example.viewmodel.LibrarySortOrder
 import com.example.viewmodel.Screen
+import com.example.viewmodel.searchAndSort
+import androidx.compose.ui.draw.clip
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -85,6 +93,7 @@ fun PlaylistsScreen(
 ) {
     val playlists by viewModel.allPlaylists.collectAsState()
     val folderPlaylists by viewModel.folderPlaylists.collectAsState()
+    val playlistRows by viewModel.playlistRows.collectAsState()
     val accent = LocalAccentColor.current
 
     var showCreateDialog by remember { mutableStateOf(false) }
@@ -98,15 +107,10 @@ fun PlaylistsScreen(
         viewModel.addFolder(uri, flags)
     }
 
-    // A folder playlist opens as a track list, the same way the Folders screen does.
+    // A folder playlist opens as the same playlist page as yours, read-only.
     folderPlaylists.firstOrNull { it.first == openFolderName }?.let { (name, tracks) ->
         BackHandler { viewModel.closeFolderPlaylist() }
-        LibraryScreen(
-            viewModel = viewModel,
-            title = name.uppercase(),
-            tracksOverride = tracks,
-            onBack = { viewModel.closeFolderPlaylist() }
-        )
+        CollectionScreen(viewModel, CollectionKind.FOLDER, name, tracks, onBack = { viewModel.closeFolderPlaylist() }, isPlaylist = true)
         return
     }
 
@@ -236,12 +240,7 @@ fun PlaylistsScreen(
                                     .padding(horizontal = 14.dp, vertical = 12.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.Folder,
-                                    contentDescription = null,
-                                    tint = accent,
-                                    modifier = Modifier.size(24.dp)
-                                )
+                                TracksCover(tracks, Modifier.size(48.dp), corner = 6.dp)
                                 Spacer(modifier = Modifier.width(12.dp))
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
@@ -294,24 +293,27 @@ fun PlaylistsScreen(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier.weight(1f)
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Default.PlaylistPlay,
-                                        contentDescription = null,
-                                        tint = accent,
-                                        modifier = Modifier.size(24.dp)
-                                    )
+                                    val rows = playlistRows[playlist.id].orEmpty()
+                                    PlaylistCover(playlist, rows, Modifier.size(48.dp), corner = 6.dp)
                                     Spacer(modifier = Modifier.width(12.dp))
                                     Column {
                                         Text(
                                             text = playlist.name,
                                             style = MaterialTheme.typography.bodyLarge,
                                             fontWeight = FontWeight.SemiBold,
-                                            color = PrimaryText
+                                            color = PrimaryText,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
                                         )
                                         Text(
-                                            text = "Tap to open and play",
+                                            text = listOfNotNull(
+                                                playlist.description.takeIf { it.isNotBlank() },
+                                                "${rows.size} ${if (rows.size == 1) "song" else "songs"}"
+                                            ).joinToString(" · "),
                                             style = MaterialTheme.typography.labelSmall,
-                                            color = MutedText
+                                            color = MutedText,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
                                         )
                                     }
                                 }
@@ -485,6 +487,246 @@ fun PlaylistsScreen(
     }
 }
 
+/**
+ * "12 SONGS · 48 MIN · CREATED 3 OCT" (the year only when it isn't this year); with no
+ * creation date (folders, albums...) just "12 SONGS · 48 MIN".
+ */
+private fun playlistSummary(songs: Int, totalMs: Long, createdAt: Long?): String {
+    val minutes = totalMs / 60_000
+    val length = if (minutes >= 60) "${minutes / 60} H ${minutes % 60} MIN" else "$minutes MIN"
+    val count = "$songs ${if (songs == 1) "SONG" else "SONGS"}"
+    if (createdAt == null) return "$count · $length"
+    val thisYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
+    val created = java.util.Calendar.getInstance().apply { timeInMillis = createdAt }
+    val pattern = if (created.get(java.util.Calendar.YEAR) == thisYear) "d MMM" else "d MMM yyyy"
+    val date = java.text.SimpleDateFormat(pattern, java.util.Locale.getDefault()).format(java.util.Date(createdAt))
+    return "$count · $length · CREATED ${date.uppercase()}"
+}
+
+/**
+ * The top of a playlist page, shared by your playlists and read-only collections: back,
+ * ⋮ [menu] (null hides it), then cover with name, description, summary and Play / Shuffle.
+ */
+@Composable
+private fun PlaylistHeader(
+    kind: String = "PLAYLIST",
+    name: String,
+    description: String,
+    summary: String,
+    cover: @Composable (Modifier) -> Unit,
+    canPlay: Boolean,
+    onBack: () -> Unit,
+    onPlay: () -> Unit,
+    onShuffle: () -> Unit,
+    menu: (@Composable (close: () -> Unit) -> Unit)?
+) {
+    val accent = LocalAccentColor.current
+    var menuOpen by remember { mutableStateOf(false) }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        IconButton(onClick = onBack, modifier = Modifier.minimumInteractiveComponentSize()) {
+            Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back", tint = PrimaryText)
+        }
+        Text(kind, style = MaterialTheme.typography.labelSmall, color = MutedText, fontFamily = FontFamily.Monospace, letterSpacing = 1.2.sp)
+        Box(Modifier.minimumInteractiveComponentSize()) {
+            if (menu != null) {
+                IconButton(onClick = { menuOpen = true }, modifier = Modifier.minimumInteractiveComponentSize()) {
+                    Icon(imageVector = Icons.Default.MoreVert, contentDescription = "Playlist options", tint = PrimaryText)
+                }
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    menu { menuOpen = false }
+                }
+            }
+        }
+    }
+
+    // Text at the top of the cover's height and the buttons at its bottom, so there's no gap
+    // above the name; a long name or description makes the row taller instead.
+    Row(modifier = Modifier.padding(top = 4.dp).height(IntrinsicSize.Min)) {
+        cover(Modifier.size(120.dp))
+        Spacer(modifier = Modifier.width(14.dp))
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxHeight()) {
+            Text(
+                text = name,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = PrimaryText,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (description.isNotBlank()) {
+                Text(description, style = MaterialTheme.typography.bodySmall, color = SecondaryText, maxLines = 3, overflow = TextOverflow.Ellipsis)
+            }
+            Text(
+                text = summary,
+                style = MaterialTheme.typography.labelSmall,
+                color = MutedText,
+                fontFamily = FontFamily.Monospace
+            )
+            Spacer(modifier = Modifier.weight(1f))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.height(44.dp)) {
+                Button(
+                    onClick = onPlay,
+                    enabled = canPlay,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = accent,
+                        contentColor = com.example.ui.theme.buttonContentColorFor(accent)
+                    ),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.weight(1f).fillMaxHeight()
+                ) {
+                    Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Play", fontWeight = FontWeight.Bold)
+                }
+                OutlinedButton(
+                    onClick = onShuffle,
+                    enabled = canPlay,
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = PrimaryText),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, TerminalBorder),
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
+                    modifier = Modifier.width(44.dp).fillMaxHeight()
+                ) {
+                    Icon(imageVector = Icons.Default.Shuffle, contentDescription = "Shuffle", modifier = Modifier.size(18.dp))
+                }
+            }
+        }
+    }
+
+    Spacer(modifier = Modifier.height(14.dp))
+}
+
+/** A read-only song collection; [naturalOrder] names the order its songs come in. */
+enum class CollectionKind(val label: String, val naturalOrder: String) {
+    FOLDER("FOLDER", "Folder order"),
+    ALBUM("ALBUM", "Track order"),
+    ARTIST("ARTIST", "Album order"),
+    FAVORITES("FAVORITES", "Default order"),
+    HISTORY("RECENTLY PLAYED", "Most recent first")
+}
+
+/** "ALBUM · LiSA · 2014 · 12 SONGS · 48 MIN", "ARTIST · 4 ALBUMS · 31 SONGS · 2 H 5 MIN", ... */
+private fun collectionSummary(kind: CollectionKind, tracks: List<Track>): String {
+    val songs = playlistSummary(tracks.size, tracks.sumOf { it.durationMs }, createdAt = null)
+    val extra = when (kind) {
+        CollectionKind.ALBUM -> listOfNotNull(
+            tracks.groupingBy { it.artist }.eachCount().maxByOrNull { it.value }?.key?.uppercase(),
+            tracks.firstOrNull { it.year > 0 }?.year?.toString()
+        )
+        CollectionKind.ARTIST -> tracks.map { it.album }.distinct().size.let { listOf("$it ${if (it == 1) "ALBUM" else "ALBUMS"}") }
+        else -> emptyList()
+    }
+    return (listOf(kind.label).takeIf { kind != CollectionKind.FAVORITES && kind != CollectionKind.HISTORY }.orEmpty() + extra + songs)
+        .joinToString(" · ")
+}
+
+/**
+ * A folder playlist, album, artist, Favorites or Recently Played: the same page as your
+ * playlists, but read-only. Instead of editing it can be sorted (remembered per page) or saved
+ * as a playlist of yours. [isPlaylist] credits plays to it in the stats (folder playlists).
+ */
+@Composable
+fun CollectionScreen(
+    viewModel: MainViewModel,
+    kind: CollectionKind,
+    name: String,
+    givenTracks: List<Track>,
+    onBack: () -> Unit,
+    isPlaylist: Boolean = false
+) {
+    val sortKey = "${kind.name}:$name"
+    val sort by remember(sortKey) { viewModel.listSort(sortKey) }.collectAsState(initial = null)
+    val natural = remember(givenTracks, kind) {
+        if (kind == CollectionKind.ALBUM || kind == CollectionKind.ARTIST) searchAndSort(givenTracks, "", LibrarySortOrder.ALBUM_ASC)
+        else givenTracks
+    }
+    val tracks = remember(natural, sort) { sort?.let { searchAndSort(natural, "", it) } ?: natural }
+    var sortMenu by remember { mutableStateOf(false) }
+    val currentTrack by viewModel.currentTrack.collectAsState()
+    val isPlaying by viewModel.isPlaying.collectAsState()
+    val favoriteIdList by viewModel.favoriteTrackIds.collectAsState()
+    val favoriteIds = remember(favoriteIdList) { favoriteIdList.toHashSet() }
+    fun play(list: List<Track>, index: Int) {
+        viewModel.playTrackList(list, index, source = name, isPlaylist = isPlaylist)
+        viewModel.navigateTo(Screen.PLAYER)
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(TerminalBlack)
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+    ) {
+        PlaylistHeader(
+            kind = kind.label,
+            name = name,
+            description = "",
+            summary = collectionSummary(kind, tracks),
+            cover = { TracksCover(tracks, it, corner = 10.dp) },
+            canPlay = tracks.isNotEmpty(),
+            onBack = onBack,
+            onPlay = { play(tracks, 0) },
+            onShuffle = { play(tracks.shuffled(), 0) }
+        ) { close ->
+            DropdownMenuItem(
+                text = { Text("Save as new playlist", color = PrimaryText) },
+                enabled = tracks.isNotEmpty(),
+                onClick = { close(); viewModel.saveAsPlaylist(name, tracks) }
+            )
+        }
+        Box(Modifier.padding(bottom = 8.dp)) {
+            Text(
+                text = "SORT: ${(sort?.label ?: kind.naturalOrder).uppercase()} ▾",
+                style = MaterialTheme.typography.labelSmall,
+                color = MutedText,
+                fontFamily = FontFamily.Monospace,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .clickable { sortMenu = true }
+                    .padding(horizontal = 4.dp, vertical = 6.dp)
+            )
+            DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
+                // null: the page's own order (folder, track, most recent...).
+                (listOf(null) + LibrarySortOrder.entries).forEach { order ->
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                order?.label ?: kind.naturalOrder,
+                                color = if (order == sort) LocalAccentColor.current else PrimaryText,
+                                fontWeight = if (order == sort) FontWeight.Bold else FontWeight.Normal
+                            )
+                        },
+                        onClick = { sortMenu = false; viewModel.setListSort(sortKey, order) }
+                    )
+                }
+            }
+        }
+        LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            // By position: Recently Played can list a song more than once.
+            itemsIndexed(tracks, key = { index, _ -> index }) { index, track ->
+                // The same row as All Songs: heart, Play Next, Add to Queue, Add to Playlist.
+                val isCurrent = track.id == currentTrack?.id
+                TrackListItem(
+                    track = track,
+                    index = index + 1,
+                    isCurrent = isCurrent,
+                    isPlaying = isCurrent && isPlaying,
+                    isFavorite = track.id in favoriteIds,
+                    accentColor = LocalAccentColor.current,
+                    onPlay = { play(tracks, index) },
+                    onPlayNext = { viewModel.playNext(track) },
+                    onAddToQueue = { viewModel.addToQueue(track) },
+                    onAddToPlaylist = { viewModel.setTrackToAddToPlaylist(track) },
+                    onToggleFavorite = { viewModel.toggleFavorite(track.id) }
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun PlaylistSectionLabel(text: String) {
     Text(
@@ -533,60 +775,74 @@ fun PlaylistDetailScreen(
         }
     }
 
+    // The opened snapshot doesn't change on edit; the live row does.
+    val playlists by viewModel.allPlaylists.collectAsState()
+    val current = playlists.firstOrNull { it.id == playlist.id } ?: playlist
+    var adding by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf(false) }
+    var deleting by remember { mutableStateOf(false) }
+
+    if (adding) {
+        BackHandler { adding = false }
+        AddSongsScreen(viewModel, current, savedTracks.map { it.trackId }.toSet(), onDone = { adding = false })
+        return
+    }
+    if (editing) {
+        EditPlaylistSheet(viewModel, current, savedTracks, onDismiss = { editing = false })
+    }
+    if (deleting) {
+        AlertDialog(
+            onDismissRequest = { deleting = false },
+            title = { Text("Delete Playlist?", color = PrimaryText) },
+            text = { Text("Are you sure you want to delete '${current.name}'? Audio files on device will not be deleted.", color = SecondaryText) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        deleting = false
+                        viewModel.deletePlaylist(current.id)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error, contentColor = androidx.compose.ui.graphics.Color.White)
+                ) { Text("Delete", fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    onClick = { deleting = false },
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = PrimaryText),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, TerminalBorder)
+                ) { Text("Cancel") }
+            },
+            containerColor = TerminalSurfaceElevated
+        )
+    }
+    fun play(tracks: List<Track>, index: Int) {
+        viewModel.playTrackList(tracks, index, source = current.name, isPlaylist = true, playlistId = current.id)
+        viewModel.navigateTo(Screen.PLAYER)
+    }
+
+    Box(modifier = modifier.fillMaxSize()) {
     Column(
-        modifier = modifier
+        modifier = Modifier
             .fillMaxSize()
             .background(TerminalBlack)
             .padding(horizontal = 16.dp, vertical = 8.dp)
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onBack, modifier = Modifier.minimumInteractiveComponentSize()) {
-                    Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back", tint = PrimaryText)
-                }
-                Spacer(modifier = Modifier.width(4.dp))
-                Column {
-                    Text(
-                        text = playlist.name.uppercase(),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = PrimaryText
-                    )
-                    Text(
-                        text = "[ ${trackList.size} TRACKS ]",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MutedText,
-                        fontFamily = FontFamily.Monospace
-                    )
-                }
-            }
-
-            if (trackList.isNotEmpty()) {
-                Button(
-                    onClick = {
-                        viewModel.playTrackList(trackList, 0, source = playlist.name, isPlaylist = true)
-                        viewModel.navigateTo(Screen.PLAYER)
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = accent,
-                        contentColor = com.example.ui.theme.buttonContentColorFor(accent)
-                    ),
-                    shape = RoundedCornerShape(6.dp)
-                ) {
-                    Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Play", fontWeight = FontWeight.Bold)
-                }
-            }
+        PlaylistHeader(
+            name = current.name,
+            description = current.description,
+            summary = playlistSummary(trackList.size, trackList.sumOf { it.durationMs }, current.createdAt),
+            cover = { PlaylistCover(current, savedTracks, it.clickable { editing = true }, corner = 10.dp) },
+            canPlay = trackList.isNotEmpty(),
+            onBack = onBack,
+            onPlay = { play(trackList, 0) },
+            onShuffle = { play(trackList.shuffled(), 0) }
+        ) { close ->
+            DropdownMenuItem(text = { Text("Edit details", color = PrimaryText) }, onClick = { close(); editing = true })
+            DropdownMenuItem(text = { Text("Add songs", color = PrimaryText) }, onClick = { close(); adding = true })
+            DropdownMenuItem(
+                text = { Text("Delete playlist", color = MaterialTheme.colorScheme.error) },
+                onClick = { close(); deleting = true }
+            )
         }
-
-        Spacer(modifier = Modifier.height(12.dp))
 
         if (trackList.isEmpty()) {
             Box(
@@ -598,7 +854,7 @@ fun PlaylistDetailScreen(
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(text = "> PLAYLIST IS EMPTY", style = MaterialTheme.typography.labelLarge, color = MutedText)
                     Spacer(modifier = Modifier.height(6.dp))
-                    Text(text = "Add songs to this playlist from the Library screen", style = MaterialTheme.typography.bodySmall, color = MutedText)
+                    Text(text = "Tap + to add songs", style = MaterialTheme.typography.bodySmall, color = MutedText)
                 }
             }
         } else {
@@ -607,7 +863,9 @@ fun PlaylistDetailScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .weight(1f),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                // Room to scroll the last song out from under the + button.
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 80.dp)
             ) {
                 items(playlistTracks, key = { it.id }) { pt ->
                   ReorderableItem(reorderState, key = pt.id) { isDragging ->
@@ -619,9 +877,7 @@ fun PlaylistDetailScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable {
-                                val idx = playlistTracks.indexOf(pt)
-                                viewModel.playTrackList(trackList, idx.coerceAtLeast(0), source = playlist.name, isPlaylist = true)
-                                viewModel.navigateTo(Screen.PLAYER)
+                                play(trackList, playlistTracks.indexOf(pt).coerceAtLeast(0))
                             }
                     ) {
                         Row(
@@ -680,6 +936,16 @@ fun PlaylistDetailScreen(
                 }
             }
         }
+    }
+    // Add songs, bottom right like the Playlists screen's create button.
+    FloatingActionButton(
+        onClick = { adding = true },
+        containerColor = accent,
+        contentColor = com.example.ui.theme.buttonContentColorFor(accent),
+        modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp)
+    ) {
+        Icon(imageVector = Icons.Default.Add, contentDescription = "Add songs")
+    }
     }
 }
 

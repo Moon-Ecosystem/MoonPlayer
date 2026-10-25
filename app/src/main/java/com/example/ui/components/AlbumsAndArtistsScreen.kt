@@ -104,10 +104,16 @@ fun GroupedTracksScreen(
 
     if (selectedGroup != null) {
         val tracksForGroup = groups[selectedGroup] ?: emptyList()
-        LibraryScreen(
+        androidx.activity.compose.BackHandler { selectedGroup = null }
+        CollectionScreen(
             viewModel = viewModel,
-            title = selectedGroup!!.uppercase(),
-            tracksOverride = tracksForGroup,
+            kind = when (mode) {
+                GroupMode.ALBUMS -> CollectionKind.ALBUM
+                GroupMode.ARTISTS -> CollectionKind.ARTIST
+                GroupMode.FOLDERS -> CollectionKind.FOLDER
+            },
+            name = selectedGroup!!.ifBlank { "Unknown" },
+            givenTracks = tracksForGroup,
             onBack = { selectedGroup = null }
         )
     } else {

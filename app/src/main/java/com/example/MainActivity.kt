@@ -28,6 +28,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import com.example.ui.components.AboutScreen
 import com.example.ui.components.AddToPlaylistDialog
+import com.example.ui.components.CollectionKind
+import com.example.ui.components.CollectionScreen
 import com.example.ui.components.EqualizerDialog
 import com.example.ui.components.GroupMode
 import com.example.ui.components.GroupedTracksScreen
@@ -93,6 +95,9 @@ fun MoonPlayerApp(viewModel: MainViewModel) {
     BackHandler(enabled = drawerState.isOpen || currentScreen != Screen.PLAYER) {
         if (drawerState.isOpen) {
             scope.launch { drawerState.close() }
+        } else if (currentScreen == Screen.PLAYLIST_DETAIL) {
+            // Same as the page's own back arrow (and folder playlists): back to the list.
+            viewModel.navigateTo(Screen.PLAYLISTS)
         } else if (currentScreen != Screen.PLAYER) {
             viewModel.navigateTo(Screen.PLAYER)
         }
@@ -195,10 +200,11 @@ fun MoonPlayerApp(viewModel: MainViewModel) {
                     }
 
                     Screen.FAVORITES -> {
-                        LibraryScreen(
+                        CollectionScreen(
                             viewModel = viewModel,
-                            title = "FAVORITES",
-                            tracksOverride = favoriteTracks,
+                            kind = CollectionKind.FAVORITES,
+                            name = "Favorites",
+                            givenTracks = favoriteTracks,
                             onBack = { viewModel.navigateTo(Screen.PLAYER) }
                         )
                     }
@@ -215,10 +221,11 @@ fun MoonPlayerApp(viewModel: MainViewModel) {
                                 albumArtUri = it.albumArtUri
                             )
                         }
-                        LibraryScreen(
+                        CollectionScreen(
                             viewModel = viewModel,
-                            title = "RECENTLY PLAYED",
-                            tracksOverride = historyTracks,
+                            kind = CollectionKind.HISTORY,
+                            name = "Recently played",
+                            givenTracks = historyTracks,
                             onBack = { viewModel.navigateTo(Screen.PLAYER) }
                         )
                     }
