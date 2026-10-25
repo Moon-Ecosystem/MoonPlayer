@@ -70,6 +70,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.db.PlaylistEntity
 import com.example.data.model.Track
+import com.example.data.stats.StatsKind
 import com.example.ui.theme.LocalAccentColor
 import com.example.ui.theme.MutedText
 import com.example.ui.theme.PrimaryText
@@ -95,6 +96,9 @@ fun PlaylistsScreen(
     val folderPlaylists by viewModel.folderPlaylists.collectAsState()
     val playlistRows by viewModel.playlistRows.collectAsState()
     val accent = LocalAccentColor.current
+    // The playlist the music comes from is marked like the playing song (matched by name, as in the drawer).
+    val playingFrom by viewModel.playingFrom.collectAsState()
+    val isPlaying by viewModel.isPlaying.collectAsState()
 
     var showCreateDialog by remember { mutableStateOf(false) }
     var playlistToRename by remember { mutableStateOf<PlaylistEntity?>(null) }
@@ -226,10 +230,11 @@ fun PlaylistsScreen(
                         item { PlaylistSectionLabel("FOLDERS") }
                     }
                     itemsIndexed(folderPlaylists) { _, (name, tracks) ->
+                        val playing = name == playingFrom
                         Surface(
                             shape = RoundedCornerShape(8.dp),
-                            color = TerminalRaisedPanel,
-                            border = androidx.compose.foundation.BorderStroke(1.dp, TerminalBorder),
+                            color = if (playing) TerminalSurfaceElevated else TerminalRaisedPanel,
+                            border = androidx.compose.foundation.BorderStroke(1.dp, if (playing) accent.copy(alpha = 0.8f) else TerminalBorder),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable { viewModel.openFolderPlaylist(name) }
@@ -247,14 +252,15 @@ fun PlaylistsScreen(
                                         text = name,
                                         style = MaterialTheme.typography.bodyLarge,
                                         fontWeight = FontWeight.SemiBold,
-                                        color = PrimaryText
+                                        color = if (playing) accent else PrimaryText
                                     )
                                     Text(
-                                        text = "${tracks.size} tracks · updates with the folder",
+                                        text = (if (playing) "Playing · " else "") + "${tracks.size} tracks · updates with the folder",
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = MutedText
+                                        color = if (playing) accent else MutedText
                                     )
                                 }
+                                if (playing && isPlaying) EqualizerWaveIndicator(accent, Modifier.padding(horizontal = 8.dp))
                                 IconButton(
                                     onClick = { viewModel.playTrackList(tracks, 0, source = name, isPlaylist = true) },
                                     enabled = tracks.isNotEmpty(),
@@ -273,10 +279,11 @@ fun PlaylistsScreen(
                         item { PlaylistSectionLabel("MY PLAYLISTS") }
                     }
                     items(playlists, key = { it.id }) { playlist ->
+                        val playing = playlist.name == playingFrom
                         Surface(
                             shape = RoundedCornerShape(8.dp),
-                            color = TerminalRaisedPanel,
-                            border = androidx.compose.foundation.BorderStroke(1.dp, TerminalBorder),
+                            color = if (playing) TerminalSurfaceElevated else TerminalRaisedPanel,
+                            border = androidx.compose.foundation.BorderStroke(1.dp, if (playing) accent.copy(alpha = 0.8f) else TerminalBorder),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable { viewModel.openPlaylist(playlist) }
@@ -296,26 +303,28 @@ fun PlaylistsScreen(
                                     val rows = playlistRows[playlist.id].orEmpty()
                                     PlaylistCover(playlist, rows, Modifier.size(48.dp), corner = 6.dp)
                                     Spacer(modifier = Modifier.width(12.dp))
-                                    Column {
+                                    Column(modifier = Modifier.weight(1f)) {
                                         Text(
                                             text = playlist.name,
                                             style = MaterialTheme.typography.bodyLarge,
                                             fontWeight = FontWeight.SemiBold,
-                                            color = PrimaryText,
+                                            color = if (playing) accent else PrimaryText,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
                                         )
                                         Text(
                                             text = listOfNotNull(
+                                                "Playing".takeIf { playing },
                                                 playlist.description.takeIf { it.isNotBlank() },
                                                 "${rows.size} ${if (rows.size == 1) "song" else "songs"}"
                                             ).joinToString(" · "),
                                             style = MaterialTheme.typography.labelSmall,
-                                            color = MutedText,
+                                            color = if (playing) accent else MutedText,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
                                         )
                                     }
+                                    if (playing && isPlaying) EqualizerWaveIndicator(accent, Modifier.padding(horizontal = 8.dp))
                                 }
 
                                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -646,6 +655,19 @@ fun CollectionScreen(
     }
     val tracks = remember(natural, sort) { sort?.let { searchAndSort(natural, "", it) } ?: natural }
     var sortMenu by remember { mutableStateOf(false) }
+    // Plays are recorded by album, artist and playlist name; a plain folder or Favorites has none.
+    val statsKind = when (kind) {
+        CollectionKind.ALBUM -> StatsKind.ALBUM
+        CollectionKind.ARTIST -> StatsKind.ARTIST
+        CollectionKind.FOLDER -> StatsKind.PLAYLIST.takeIf { isPlaylist }
+        else -> null
+    }
+    var showStats by remember { mutableStateOf(false) }
+    if (showStats) {
+        BackHandler { showStats = false }
+        StatsDetailScreen(viewModel, onBack = { showStats = false })
+        return
+    }
     val currentTrack by viewModel.currentTrack.collectAsState()
     val isPlaying by viewModel.isPlaying.collectAsState()
     val favoriteIdList by viewModel.favoriteTrackIds.collectAsState()
@@ -675,6 +697,10 @@ fun CollectionScreen(
                 text = { Text("Save as new playlist", color = PrimaryText) },
                 enabled = tracks.isNotEmpty(),
                 onClick = { close(); viewModel.saveAsPlaylist(name, tracks) }
+            )
+            if (statsKind != null) DropdownMenuItem(
+                text = { Text("Listening stats", color = PrimaryText) },
+                onClick = { close(); viewModel.openStatsDetail(statsKind, name); showStats = true }
             )
         }
         Box(Modifier.padding(bottom = 8.dp)) {
@@ -747,6 +773,7 @@ fun PlaylistDetailScreen(
     modifier: Modifier = Modifier
 ) {
     val savedTracks by viewModel.playlistTracks.collectAsState()
+    val currentTrack by viewModel.currentTrack.collectAsState()
     val accent = LocalAccentColor.current
 
     // Moves instantly while dragging; the order is saved once when the drag ends.
@@ -781,7 +808,13 @@ fun PlaylistDetailScreen(
     var adding by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf(false) }
+    var showStats by remember { mutableStateOf(false) }
 
+    if (showStats) {
+        BackHandler { showStats = false }
+        StatsDetailScreen(viewModel, onBack = { showStats = false })
+        return
+    }
     if (adding) {
         BackHandler { adding = false }
         AddSongsScreen(viewModel, current, savedTracks.map { it.trackId }.toSet(), onDone = { adding = false })
@@ -839,6 +872,10 @@ fun PlaylistDetailScreen(
             DropdownMenuItem(text = { Text("Edit details", color = PrimaryText) }, onClick = { close(); editing = true })
             DropdownMenuItem(text = { Text("Add songs", color = PrimaryText) }, onClick = { close(); adding = true })
             DropdownMenuItem(
+                text = { Text("Listening stats", color = PrimaryText) },
+                onClick = { close(); viewModel.openStatsDetail(StatsKind.PLAYLIST, current.name); showStats = true }
+            )
+            DropdownMenuItem(
                 text = { Text("Delete playlist", color = MaterialTheme.colorScheme.error) },
                 onClick = { close(); deleting = true }
             )
@@ -869,11 +906,13 @@ fun PlaylistDetailScreen(
             ) {
                 items(playlistTracks, key = { it.id }) { pt ->
                   ReorderableItem(reorderState, key = pt.id) { isDragging ->
+                    // Marked like All Songs; a song in the playlist twice is marked twice.
+                    val isCurrent = pt.trackId == currentTrack?.id
                     Surface(
                         shape = RoundedCornerShape(8.dp),
-                        color = if (isDragging) TerminalSurfaceElevated else TerminalRaisedPanel,
+                        color = if (isDragging || isCurrent) TerminalSurfaceElevated else TerminalRaisedPanel,
                         shadowElevation = if (isDragging) 8.dp else 0.dp,
-                        border = androidx.compose.foundation.BorderStroke(1.dp, TerminalBorder),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, if (isCurrent) accent.copy(alpha = 0.8f) else TerminalBorder),
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable {
@@ -891,8 +930,8 @@ fun PlaylistDetailScreen(
                                 Text(
                                     text = pt.title,
                                     style = MaterialTheme.typography.bodyMedium,
-                                    color = PrimaryText,
-                                    fontWeight = FontWeight.Medium,
+                                    color = if (isCurrent) accent else PrimaryText,
+                                    fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Medium,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )

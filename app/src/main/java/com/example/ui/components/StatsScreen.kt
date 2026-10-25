@@ -21,6 +21,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.AvTimer
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Event
 import androidx.compose.material.icons.filled.Favorite
@@ -180,35 +181,7 @@ fun StatsScreen(
         }
 
         // RANGE: applies to every number and chart below
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
-            StatsRange.entries.forEach { r ->
-                FilterChip(
-                    selected = r == range,
-                    onClick = { viewModel.setStatsRange(r) },
-                    // Colour set on the text: the theme's labelSmall carries its own grey.
-                    label = {
-                        Text(
-                            r.label,
-                            fontFamily = FontFamily.Monospace,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = if (r == range) buttonContentColorFor(accent) else MutedText
-                        )
-                    },
-                    colors = FilterChipDefaults.filterChipColors(
-                        containerColor = TerminalRaisedPanel,
-                        labelColor = MutedText,
-                        selectedContainerColor = accent,
-                        selectedLabelColor = buttonContentColorFor(accent)
-                    ),
-                    border = FilterChipDefaults.filterChipBorder(
-                        enabled = true,
-                        selected = r == range,
-                        borderColor = TerminalBorder,
-                        selectedBorderColor = accent
-                    )
-                )
-            }
-        }
+        StatsRangeChips(range, accent, viewModel::setStatsRange)
 
         // An artist/album/song/playlist page replaces the tabs; Back returns to them.
         detail?.let { d ->
@@ -266,6 +239,70 @@ fun StatsScreen(
                     else -> if (s.plays == 0) NoListening() else TimeTab(s, accent)
                 }
             }
+        }
+    }
+}
+
+/**
+ * One album, artist or playlist's stats page, opened from its own page's menu (set the item with
+ * openStatsDetail first). It stays over that page, so Back returns there.
+ */
+@Composable
+fun StatsDetailScreen(viewModel: MainViewModel, onBack: () -> Unit) {
+    val detail by viewModel.statsDetail.collectAsState()
+    val range by viewModel.statsRange.collectAsState()
+    val accent = LocalAccentColor.current
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(TerminalBlack)
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+    ) {
+        StatsRangeChips(range, accent, viewModel::setStatsRange)
+        detail?.let { d ->
+            key(d.kind, d.key) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState())
+                        .padding(top = 12.dp, bottom = 24.dp)
+                ) {
+                    DetailPage(d, accent, viewModel::openStatsDetail, onBack)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StatsRangeChips(range: StatsRange, accent: Color, onSelect: (StatsRange) -> Unit) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+        StatsRange.entries.forEach { r ->
+            FilterChip(
+                selected = r == range,
+                onClick = { onSelect(r) },
+                // Colour set on the text: the theme's labelSmall carries its own grey.
+                label = {
+                    Text(
+                        r.label,
+                        fontFamily = FontFamily.Monospace,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (r == range) buttonContentColorFor(accent) else MutedText
+                    )
+                },
+                colors = FilterChipDefaults.filterChipColors(
+                    containerColor = TerminalRaisedPanel,
+                    labelColor = MutedText,
+                    selectedContainerColor = accent,
+                    selectedLabelColor = buttonContentColorFor(accent)
+                ),
+                border = FilterChipDefaults.filterChipBorder(
+                    enabled = true,
+                    selected = r == range,
+                    borderColor = TerminalBorder,
+                    selectedBorderColor = accent
+                )
+            )
         }
     }
 }
@@ -691,6 +728,13 @@ private fun RankedCard(
                         modifier = Modifier.fillMaxWidth().height(4.dp)
                     )
                 }
+                // Says the row opens a page of its own.
+                if (onClick != null) Icon(
+                    imageVector = Icons.Default.ChevronRight,
+                    contentDescription = null,
+                    tint = MutedText,
+                    modifier = Modifier.padding(start = 6.dp).size(20.dp)
+                )
             }
             if (index < items.lastIndex) {
                 HorizontalDivider(color = TerminalBorder.copy(alpha = 0.5f), modifier = Modifier.padding(vertical = 2.dp))

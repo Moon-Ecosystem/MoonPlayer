@@ -27,6 +27,8 @@ import androidx.compose.material.icons.filled.DriveFolderUpload
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material.icons.filled.PlaylistAdd
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -299,10 +301,12 @@ fun GroupedTracksScreen(
                                             text = groupKey,
                                             style = MaterialTheme.typography.bodyLarge,
                                             fontWeight = FontWeight.SemiBold,
-                                            color = PrimaryText
+                                            color = PrimaryText,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
                                         )
                                         Text(
-                                            text = "${groupTracks.size} tracks (tap to view)",
+                                            text = if (groupTracks.size == 1) "1 song" else "${groupTracks.size} songs",
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MutedText
                                         )
@@ -334,21 +338,31 @@ fun GroupedTracksScreen(
                                         }
                                     }
 
-                                    Button(
+                                    Surface(
                                         onClick = {
                                             viewModel.playTrackList(groupTracks, 0, source = groupKey)
                                             viewModel.navigateTo(Screen.PLAYER)
                                         },
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = accent,
-                                            contentColor = com.example.ui.theme.buttonContentColorFor(accent)
-                                        ),
-                                        shape = RoundedCornerShape(6.dp)
+                                        shape = CircleShape,
+                                        color = accent,
+                                        modifier = Modifier.padding(start = 4.dp).size(36.dp)
                                     ) {
-                                        Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Play", fontWeight = FontWeight.Bold)
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                imageVector = Icons.Default.PlayArrow,
+                                                contentDescription = "Play $groupKey",
+                                                tint = com.example.ui.theme.buttonContentColorFor(accent),
+                                                modifier = Modifier.size(22.dp)
+                                            )
+                                        }
                                     }
+                                    // The rest of the row opens the album, artist or folder.
+                                    Icon(
+                                        imageVector = Icons.Default.ChevronRight,
+                                        contentDescription = null,
+                                        tint = MutedText,
+                                        modifier = Modifier.padding(start = 6.dp).size(22.dp)
+                                    )
                                 }
                             }
                         }
