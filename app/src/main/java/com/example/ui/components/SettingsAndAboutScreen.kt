@@ -215,6 +215,13 @@ fun SettingsScreen(
             onCheckedChange = { viewModel.setShowRemainingTime(it) },
             accentColor = accent
         )
+        SettingsToggleRow(
+            title = "Tap Format for Song Info",
+            subtitle = "Tapping the format (M4A · 256 KBPS) under the seek bar opens the file, stream and tag details. Also in the player's ⋮ menu",
+            checked = settings.badgeOpensSongInfo,
+            onCheckedChange = { viewModel.setBadgeOpensSongInfo(it) },
+            accentColor = accent
+        )
 
         Spacer(modifier = Modifier.height(4.dp))
 

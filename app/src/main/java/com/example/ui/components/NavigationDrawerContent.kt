@@ -24,7 +24,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Info
@@ -73,6 +72,8 @@ fun NavigationDrawerContent(
     val currentScreen by viewModel.currentScreen.collectAsState()
     val allTracks by viewModel.allTracks.collectAsState()
     val quickPlaylists by viewModel.quickPlaylists.collectAsState()
+    val playlistRows by viewModel.playlistRows.collectAsState()
+    val folderPlaylists by viewModel.folderPlaylists.collectAsState()
     val accent = LocalAccentColor.current
 
     Surface(
@@ -150,7 +151,12 @@ fun NavigationDrawerContent(
                 letterSpacing = 1.2.sp
             )
             quickPlaylists.forEach { item ->
-                QuickPlaylistRow(item, accent) {
+                QuickPlaylistRow(
+                    item,
+                    item.playlist?.let { playlistRows[it.id] }.orEmpty(),
+                    if (item.playlist == null) folderPlaylists.firstOrNull { it.first == item.name }?.second.orEmpty() else emptyList(),
+                    accent
+                ) {
                     item.playlist?.let { viewModel.openPlaylist(it) } ?: viewModel.openFolderPlaylist(item.name)
                     onCloseDrawer()
                 }
@@ -285,7 +291,13 @@ fun NavigationDrawerContent(
 
 /** A playlist in the drawer: icon tile, name, and "Playing · Folder · N songs" (what applies) underneath. */
 @Composable
-private fun QuickPlaylistRow(item: MainViewModel.QuickPlaylist, accent: androidx.compose.ui.graphics.Color, onClick: () -> Unit) {
+private fun QuickPlaylistRow(
+    item: MainViewModel.QuickPlaylist,
+    rows: List<com.example.data.db.PlaylistTrackEntity>,
+    folderTracks: List<com.example.data.model.Track>,
+    accent: androidx.compose.ui.graphics.Color,
+    onClick: () -> Unit
+) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -297,18 +309,10 @@ private fun QuickPlaylistRow(item: MainViewModel.QuickPlaylist, accent: androidx
             .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 7.dp)
     ) {
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier
-                .size(36.dp)
-                .background(TerminalSurfaceElevated, RoundedCornerShape(6.dp))
-        ) {
-            Icon(
-                imageVector = if (item.playlist != null) Icons.Default.QueueMusic else Icons.Default.Folder,
-                contentDescription = null,
-                tint = if (item.playing) accent else MutedText,
-                modifier = Modifier.size(20.dp)
-            )
+        if (item.playlist != null) {
+            PlaylistCover(item.playlist, rows, Modifier.size(36.dp), corner = 6.dp)
+        } else {
+            TracksCover(folderTracks, Modifier.size(36.dp), corner = 6.dp)
         }
         Spacer(modifier = Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {

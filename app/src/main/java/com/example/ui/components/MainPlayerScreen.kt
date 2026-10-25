@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Lyrics
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.material3.DropdownMenu
@@ -90,6 +91,7 @@ import com.example.data.artModel
 import com.example.data.repository.audioFormatLabel
 import com.example.R
 import com.example.data.model.Track
+import com.example.data.model.splitTitle
 import com.example.ui.theme.LocalAccentColor
 import com.example.ui.theme.MutedText
 import com.example.ui.theme.PrimaryText
@@ -124,11 +126,26 @@ fun MainPlayerScreen(
     val favoriteIds by viewModel.favoriteTrackIds.collectAsState()
     val settings by viewModel.settings.collectAsState()
     val lyricsOpen by viewModel.lyricsOpen.collectAsState()
+    val fileMissing by viewModel.currentFileMissing.collectAsState()
 
     val accent = LocalAccentColor.current
     val isFavorite = currentTrack?.let { favoriteIds.contains(it.id) } ?: false
 
     var showOverflowMenu by remember { mutableStateOf(false) }
+    var showSongInfo by remember { mutableStateOf(false) }
+
+    // Only what the file actually reported; unknown values are left out instead of faked.
+    val techText = currentTrack?.let { t ->
+        listOfNotNull(
+            t.mimeType.takeIf { it.isNotBlank() }?.let(::audioFormatLabel),
+            t.bitrateKbps.takeIf { it > 0 }?.let { "$it KBPS" },
+            t.sampleRateHz.takeIf { it > 0 }?.let { "%.1f".format(it / 1000f).removeSuffix(".0") + " KHZ" }
+        ).joinToString(" · ")
+    }.orEmpty().ifBlank { "--" }
+
+    if (showSongInfo) currentTrack?.let { trk ->
+        SongInfoSheet(viewModel, trk, techText, onDismiss = { showSongInfo = false })
+    }
 
     BoxWithConstraints(
         modifier = modifier
@@ -235,6 +252,16 @@ fun MainPlayerScreen(
                         onDismissRequest = { showOverflowMenu = false },
                         modifier = Modifier.background(TerminalRaisedPanel)
                     ) {
+                        currentTrack?.let { trk ->
+                            PlayerMenuItem(
+                                label = "Song info",
+                                status = trk.mimeType.takeIf { it.isNotBlank() }?.let(::audioFormatLabel).orEmpty(),
+                                active = false
+                            ) {
+                                showOverflowMenu = false
+                                showSongInfo = true
+                            }
+                        }
                         PlayerMenuItem(
                             label = "Equalizer",
                             status = if (settings.equalizerEnabled) settings.equalizerPreset else "Off",
@@ -339,30 +366,7 @@ fun MainPlayerScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = currentTrack?.title.orEmpty(),
-                            style = MaterialTheme.typography.headlineSmall.copy(
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 21.sp
-                            ),
-                            color = PrimaryText,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Spacer(modifier = Modifier.height(3.dp))
-                        Text(
-                            text = buildAnnotatedString {
-                                withStyle(SpanStyle(color = accent)) { append(currentTrack?.artist.orEmpty()) }
-                                currentTrack?.album?.takeIf { it.isNotBlank() }?.let {
-                                    withStyle(SpanStyle(color = MutedText)) { append(" · $it") }
-                                }
-                            },
-                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
+                    TrackTitleBlock(currentTrack!!, accent, Modifier.weight(1f))
                     // Lyrics toggle: lit while the cover square shows lyrics, tap again for the art.
                     IconButton(
                         onClick = { if (lyricsOpen) viewModel.closeLyrics() else viewModel.openLyrics() },
@@ -391,40 +395,48 @@ fun MainPlayerScreen(
                         )
                     }
                 }
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // Technical Audio Badge
-                // Only what the file actually reported; unknown values are left out instead of faked.
-                val techText = currentTrack?.let { t ->
-                    listOfNotNull(
-                        t.mimeType.takeIf { it.isNotBlank() }?.let(::audioFormatLabel),
-                        t.bitrateKbps.takeIf { it > 0 }?.let { "$it KBPS" },
-                        t.sampleRateHz.takeIf { it > 0 }?.let { "%.1f KHZ".format(it / 1000f) }
-                    ).joinToString(" · ")
-                }.orEmpty().ifBlank { "--" }.let { "[ $it ]" }
-                Surface(
-                    shape = RoundedCornerShape(4.dp),
-                    color = TerminalRaisedPanel,
-                    border = androidx.compose.foundation.BorderStroke(0.5.dp, TerminalBorder)
-                ) {
-                    Text(
-                        text = techText,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MutedText,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                    )
-                }
             }
 
             Spacer(modifier = Modifier.weight(1f).heightIn(min = 10.dp))
 
-            // 4. SEEK BAR WITH ELAPSED AND TOTAL/REMAINING TIME
+            // 4. SEEK BAR WITH ELAPSED AND TOTAL/REMAINING TIME, the file's format between them.
+            // With the setting on, the ⓘ marks the format as the song info button. A missing
+            // file always says so and opens the sheet, which offers what to do next.
+            val formatTaps = (settings.badgeOpensSongInfo || fileMissing) && currentTrack != null
             SeekBarSection(
                 viewModel = viewModel,
                 fallbackDurationMs = currentTrack?.durationMs ?: 1L,
                 showRemainingTime = settings.showRemainingTime
-            )
+            ) {
+                // The tap area reaches down, away from the seek bar, so the times stay right under it.
+                if (currentTrack != null) Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .then(
+                            if (formatTaps) Modifier
+                                .clickable(onClickLabel = "Song info") { showSongInfo = true }
+                                .testTag("song_info_badge")
+                            else Modifier
+                        )
+                        .padding(start = 8.dp, end = 8.dp, bottom = 16.dp)
+                ) {
+                    Text(
+                        text = if (fileMissing) "FILE NOT FOUND" else techText,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontFamily = FontFamily.Monospace,
+                        letterSpacing = 0.6.sp,
+                        color = if (fileMissing) accent else MutedText,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    if (formatTaps) {
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Icon(Icons.Outlined.Info, contentDescription = null, tint = if (fileMissing) accent else MutedText, modifier = Modifier.size(12.dp))
+                    }
+                }
+            }
 
             Spacer(modifier = Modifier.height(6.dp))
 
@@ -544,12 +556,90 @@ fun MainPlayerScreen(
     }
 }
 
+/**
+ * Title, version note and artist · album. A long title first loses its version note to the grey
+ * line below ("- From THE FIRST TAKE", "(feat. X)"), then drops to two smaller lines, then ends
+ * in "…"; only then does tapping it show everything. The album is left out when it just repeats
+ * the title, as singles do.
+ */
+@Composable
+private fun TrackTitleBlock(track: Track, accent: Color, modifier: Modifier = Modifier) {
+    val (title, version) = remember(track.title) { splitTitle(track.title) }
+    var twoLines by remember(track.title) { mutableStateOf(false) }
+    var cut by remember(track.title) { mutableStateOf(false) }
+    var showFull by remember(track.title) { mutableStateOf(false) }
+    val album = track.album.takeIf {
+        it.isNotBlank() && !it.trim().equals(track.title.trim(), ignoreCase = true) && !it.trim().equals(title, ignoreCase = true)
+    }
+
+    Box(modifier = modifier) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(enabled = cut, onClickLabel = "Show full title") { showFull = true }
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.headlineSmall.copy(
+                    fontWeight = FontWeight.Bold,
+                    fontSize = if (twoLines) 18.sp else 21.sp,
+                    lineHeight = if (twoLines) 22.sp else 28.sp
+                ),
+                color = PrimaryText,
+                maxLines = if (twoLines) 2 else 1,
+                overflow = TextOverflow.Ellipsis,
+                onTextLayout = { layout ->
+                    if (!twoLines) {
+                        if (layout.hasVisualOverflow) twoLines = true
+                    } else {
+                        cut = layout.hasVisualOverflow
+                    }
+                }
+            )
+            version?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SecondaryText,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Spacer(modifier = Modifier.height(3.dp))
+            Text(
+                text = buildAnnotatedString {
+                    withStyle(SpanStyle(color = accent)) { append(track.artist) }
+                    album?.let { withStyle(SpanStyle(color = MutedText)) { append(" · $it") } }
+                },
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        DropdownMenu(
+            expanded = showFull,
+            onDismissRequest = { showFull = false },
+            modifier = Modifier.background(TerminalRaisedPanel)
+        ) {
+            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).widthIn(max = 320.dp)) {
+                Text(track.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = PrimaryText)
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(track.artist, style = MaterialTheme.typography.bodyMedium, color = accent)
+                if (track.album.isNotBlank()) {
+                    Text(track.album, style = MaterialTheme.typography.bodySmall, color = SecondaryText)
+                }
+            }
+        }
+    }
+}
+
 // Isolated so the 200ms position ticks recompose only the seek bar, not the whole player.
 @Composable
 private fun SeekBarSection(
     viewModel: MainViewModel,
     fallbackDurationMs: Long,
-    showRemainingTime: Boolean
+    showRemainingTime: Boolean,
+    middle: @Composable () -> Unit = {}
 ) {
     val positionMs by viewModel.currentPositionMs.collectAsState()
     val durationMs by viewModel.durationMs.collectAsState()
@@ -593,7 +683,8 @@ private fun SeekBarSection(
                 .fillMaxWidth()
                 .padding(horizontal = 6.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+            // Top: the format's tap area below the text mustn't push the times down.
+            verticalAlignment = Alignment.Top
         ) {
             Text(
                 text = Track.formatDuration(activePositionMs),
@@ -601,6 +692,8 @@ private fun SeekBarSection(
                 color = MutedText,
                 fontFamily = FontFamily.Monospace
             )
+
+            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.TopCenter) { middle() }
 
             val rightTimeText = if (showRemainingTime) {
                 val remaining = (totalDuration - activePositionMs).coerceAtLeast(0L)

@@ -9,6 +9,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.DocumentsContract
 import android.util.Log
+import java.io.File
 import androidx.compose.ui.graphics.Color
 import androidx.core.graphics.ColorUtils
 import androidx.palette.graphics.Palette
@@ -88,11 +89,12 @@ private val AUDIO_MIME_ALIASES = mapOf(
 
 /**
  * Canonical MIME type if [name]/[mimeType] is a supported audio file, else null.
- * The provider's MIME wins; the extension covers providers that report octet-stream.
+ * The extension wins: Android's own MIME table calls .m4a "audio/mpeg". The provider's MIME
+ * covers files without a known extension.
  */
 internal fun supportedAudioMime(name: String, mimeType: String): String? =
-    AUDIO_MIME_ALIASES[mimeType.lowercase()]
-        ?: AUDIO_EXTENSIONS[name.substringAfterLast('.', "").lowercase()]
+    AUDIO_EXTENSIONS[name.substringAfterLast('.', "").lowercase()]
+        ?: AUDIO_MIME_ALIASES[mimeType.lowercase()]
 
 /**
  * Picks the cover's most prominent colour from Palette swatches given as (rgb, population).
@@ -195,6 +197,7 @@ class MusicRepository(private val context: Context) {
 
     val allPlaylists = playlistDao.getAllPlaylists()
     val playlistSongCounts = playlistDao.getTrackCounts()
+    val allPlaylistTracks = playlistDao.getAllPlaylistTracks()
     val favoriteTrackIds = favoriteDao.getAllFavoriteIds()
     val playHistory = historyDao.getRecentHistory()
     val savedQueue = queueDao.getSavedQueue()
@@ -301,8 +304,10 @@ class MusicRepository(private val context: Context) {
                             val audioMime = supportedAudioMime(name, mime)
                             if (audioMime != null) {
                                 val lastModified = if (modIdx >= 0) cursor.getLong(modIdx) else 0L
+                                // The type is re-derived for cached tracks too, so older scans pick up fixes.
                                 val cached = known[folderTrackId(childDocId)]
                                     ?.takeIf { lastModified != 0L && it.dateAdded == lastModified }
+                                    ?.copy(mimeType = audioMime)
                                 dirTracks.add(
                                     cached ?: readFolderTrack(
                                         treeUri, childDocId, name, audioMime, lastModified, folderName
@@ -498,6 +503,31 @@ class MusicRepository(private val context: Context) {
 
     suspend fun deletePlaylist(id: Long) = withContext(Dispatchers.IO) {
         playlistDao.deletePlaylistAndTracks(id)
+    }
+
+    /**
+     * Saves a playlist's details. [photo] is a newly picked image: it's copied into the app, since
+     * the photo picker's access ends with the app. A replaced or dropped photo file is deleted.
+     */
+    suspend fun updatePlaylistDetails(old: PlaylistEntity, new: PlaylistEntity, photo: Uri?) = withContext(Dispatchers.IO) {
+        val coverUri = photo?.let { copyPlaylistPhoto(old.id, it) ?: old.coverUri } ?: new.coverUri
+        playlistDao.updateDetails(old.id, new.name.trim(), new.description.trim(), coverUri, new.eqPreset)
+        if (old.coverUri != coverUri) deletePlaylistPhoto(old.coverUri)
+    }
+
+    // A new name each time, so Coil doesn't show the cached old photo.
+    private fun copyPlaylistPhoto(id: Long, photo: Uri): String? = try {
+        val dir = File(context.filesDir, "playlist_covers").apply { mkdirs() }
+        val file = File(dir, "${id}_${System.currentTimeMillis()}.jpg")
+        context.contentResolver.openInputStream(photo)?.use { input -> file.outputStream().use { input.copyTo(it) } }
+        Uri.fromFile(file).toString()
+    } catch (e: Exception) {
+        Log.w(TAG, "Couldn't copy playlist photo: ${e.message}")
+        null
+    }
+
+    fun deletePlaylistPhoto(coverUri: String?) {
+        if (coverUri?.startsWith("file:") == true) Uri.parse(coverUri).path?.let { File(it).delete() }
     }
 
     suspend fun addTrackToPlaylist(playlistId: Long, track: Track) = withContext(Dispatchers.IO) {

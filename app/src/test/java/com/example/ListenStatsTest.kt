@@ -55,4 +55,14 @@ class ListenStatsTest {
         assertEquals(listOf("b", "c", "a"), searchAndSort(songs, "", LibrarySortOrder.DURATION_DESC).map { it.title })
         assertEquals(listOf("a", "c"), searchAndSort(songs, "amy", LibrarySortOrder.TITLE_ASC).map { it.title })
     }
+
+    @Test
+    fun `album sort keeps each album in track order`() {
+        val songs = listOf(
+            track("z", "A", 1).copy(album = "Milk", trackNumber = 2),
+            track("y", "A", 1).copy(album = "Alpha", trackNumber = 1),
+            track("x", "A", 1).copy(album = "Milk", trackNumber = 1)
+        )
+        assertEquals(listOf("y", "x", "z"), searchAndSort(songs, "", LibrarySortOrder.ALBUM_ASC).map { it.title })
+    }
 }

@@ -32,6 +32,8 @@ data class PlayerSettings(
     val resumeOnLaunch: Boolean = true,
     val pauseOnHeadphoneDisconnect: Boolean = true,
     val showRemainingTime: Boolean = false,
+    // Tapping the player's format badge opens the song info sheet.
+    val badgeOpensSongInfo: Boolean = true,
     val lastTrackUri: String = "",
     val lastPositionMs: Long = 0L,
     val repeatMode: Int = 0, // 0 = off, 1 = one, 2 = all
@@ -55,6 +57,7 @@ class SettingsManager(private val context: Context) {
         val KEY_RESUME_ON_LAUNCH = booleanPreferencesKey("resume_on_launch")
         val KEY_PAUSE_ON_DISCONNECT = booleanPreferencesKey("pause_on_disconnect")
         val KEY_SHOW_REMAINING_TIME = booleanPreferencesKey("show_remaining_time")
+        val KEY_BADGE_SONG_INFO = booleanPreferencesKey("badge_song_info")
         val KEY_LAST_TRACK_URI = stringPreferencesKey("last_track_uri")
         val KEY_LAST_POSITION_MS = longPreferencesKey("last_position_ms")
         val KEY_REPEAT_MODE = intPreferencesKey("repeat_mode")
@@ -83,6 +86,7 @@ class SettingsManager(private val context: Context) {
             resumeOnLaunch = prefs[KEY_RESUME_ON_LAUNCH] ?: true,
             pauseOnHeadphoneDisconnect = prefs[KEY_PAUSE_ON_DISCONNECT] ?: true,
             showRemainingTime = prefs[KEY_SHOW_REMAINING_TIME] ?: false,
+            badgeOpensSongInfo = prefs[KEY_BADGE_SONG_INFO] ?: true,
             lastTrackUri = prefs[KEY_LAST_TRACK_URI] ?: "",
             lastPositionMs = prefs[KEY_LAST_POSITION_MS] ?: 0L,
             repeatMode = prefs[KEY_REPEAT_MODE] ?: 0,
@@ -118,6 +122,10 @@ class SettingsManager(private val context: Context) {
         context.dataStore.edit { it[KEY_SHOW_REMAINING_TIME] = show }
     }
 
+    suspend fun setBadgeOpensSongInfo(enabled: Boolean) {
+        context.dataStore.edit { it[KEY_BADGE_SONG_INFO] = enabled }
+    }
+
     suspend fun savePlaybackState(uri: String, positionMs: Long) {
         context.dataStore.edit {
             it[KEY_LAST_TRACK_URI] = uri
@@ -135,6 +143,16 @@ class SettingsManager(private val context: Context) {
 
     suspend fun setEqualizerEnabled(enabled: Boolean) {
         context.dataStore.edit { it[KEY_EQ_ENABLED] = enabled }
+    }
+
+    /** A song list page's chosen sort (a LibrarySortOrder name), one key per page; null: none chosen. */
+    fun listSort(page: String): Flow<String?> =
+        context.dataStore.data.map { it[stringPreferencesKey("list_sort_$page")] }
+
+    /** null goes back to the page's own order. */
+    suspend fun setListSort(page: String, sort: String?) {
+        val key = stringPreferencesKey("list_sort_$page")
+        context.dataStore.edit { if (sort == null) it.remove(key) else it[key] = sort }
     }
 
     suspend fun setEqualizerPreset(preset: String) {

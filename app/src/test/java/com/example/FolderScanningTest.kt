@@ -24,6 +24,8 @@ class FolderScanningTest {
         assertEquals("audio/flac", supportedAudioMime("song.FLAC", "application/octet-stream"))
         assertEquals("audio/flac", supportedAudioMime("song", "audio/x-flac"))
         assertEquals("audio/mp4", supportedAudioMime("song.m4a", "audio/x-m4a"))
+        // What Android's file provider reports for .m4a.
+        assertEquals("audio/mp4", supportedAudioMime("song.m4a", "audio/mpeg"))
         assertEquals("audio/ogg", supportedAudioMime("song.ogg", "application/ogg"))
         assertEquals("audio/opus", supportedAudioMime("song.opus", ""))
         assertEquals("audio/wav", supportedAudioMime("song.wav", "audio/x-wav"))
