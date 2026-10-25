@@ -62,6 +62,20 @@ interface PlaylistDao {
     @Query("UPDATE playlist_tracks SET sortOrder = :sortOrder WHERE id = :id")
     suspend fun setSortOrder(id: Long, sortOrder: Int)
 
+    @Query("UPDATE playlist_tracks SET uri = :uri, albumArtUri = :albumArtUri WHERE trackId = :trackId AND uri != :uri")
+    suspend fun relinkRows(trackId: String, uri: String, albumArtUri: String?)
+
+    // A "song's art" cover is that song's address, taken from one of the playlist's rows.
+    @Query("UPDATE playlists SET coverUri = :uri WHERE coverUri IN (SELECT uri FROM playlist_tracks WHERE trackId = :trackId AND uri != :uri)")
+    suspend fun relinkCovers(trackId: String, uri: String)
+
+    /** Points a song's entries, and covers using its art, at its file's current address (same song, reached through another folder). */
+    @Transaction
+    suspend fun relink(trackId: String, uri: String, albumArtUri: String?) {
+        relinkCovers(trackId, uri) // first, while the rows still hold the old address
+        relinkRows(trackId, uri, albumArtUri)
+    }
+
     /** Rewrites positions 0..n-1 in the given order of playlist_tracks row ids. */
     @Transaction
     suspend fun reorder(rowIdsInOrder: List<Long>) {
@@ -123,6 +137,9 @@ interface HistoryDao {
             "WHERE id = (SELECT MAX(id) FROM history WHERE trackId = :trackId) AND listenedMs >= 0"
     )
     suspend fun addListenTime(trackId: String, ms: Long)
+
+    @Query("UPDATE history SET uri = :uri, albumArtUri = :albumArtUri WHERE trackId = :trackId AND uri != :uri")
+    suspend fun relink(trackId: String, uri: String, albumArtUri: String?)
 }
 
 @Dao
@@ -141,6 +158,9 @@ interface QueueDao {
         clearQueue()
         insertQueueItems(items)
     }
+
+    @Query("UPDATE playback_queue SET uri = :uri, albumArtUri = :albumArtUri WHERE trackId = :trackId AND uri != :uri")
+    suspend fun relink(trackId: String, uri: String, albumArtUri: String?)
 }
 
 @Dao

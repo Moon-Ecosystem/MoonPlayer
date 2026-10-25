@@ -299,6 +299,20 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
+    /**
+     * Swaps queued songs to [library]'s current address for the same song id, e.g. after their
+     * folder was replaced by its subfolders and the old address lost its access.
+     */
+    fun relinkQueue(library: Map<String, Track>) {
+        val q = _queue.value
+        val fixed = q.map { t -> library[t.id]?.takeIf { it.contentUri != t.contentUri } ?: t }
+        if (fixed == q) return
+        _queue.value = fixed
+        fixed.forEachIndexed { i, t ->
+            if (t !== q[i] && i < player.mediaItemCount) player.replaceMediaItem(i, t.toMediaItem())
+        }
+    }
+
     fun moveQueueItem(from: Int, to: Int) {
         val currentQ = _queue.value.toMutableList()
         if (from in currentQ.indices && to in currentQ.indices) {

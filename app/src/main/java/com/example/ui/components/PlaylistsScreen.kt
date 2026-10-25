@@ -83,6 +83,7 @@ import com.example.viewmodel.MainViewModel
 import com.example.viewmodel.LibrarySortOrder
 import com.example.viewmodel.Screen
 import com.example.viewmodel.searchAndSort
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -810,6 +811,18 @@ fun PlaylistDetailScreen(
     var deleting by remember { mutableStateOf(false) }
     var showStats by remember { mutableStateOf(false) }
 
+    // Rows whose song the last scan didn't find (deleted, moved or renamed file), and second
+    // copies of a song; nothing counts as missing before the library has loaded.
+    val allTracks by viewModel.allTracks.collectAsState()
+    val libraryIds = remember(allTracks) { allTracks.mapTo(HashSet()) { it.id } }
+    val missingRows = remember(playlistTracks, libraryIds) {
+        if (libraryIds.isEmpty()) emptySet() else playlistTracks.filter { it.trackId !in libraryIds }.mapTo(HashSet()) { it.id }
+    }
+    val duplicateRows = remember(playlistTracks) {
+        val seen = HashSet<String>()
+        playlistTracks.filterNot { seen.add(it.trackId) }.mapTo(HashSet()) { it.id }
+    }
+
     if (showStats) {
         BackHandler { showStats = false }
         StatsDetailScreen(viewModel, onBack = { showStats = false })
@@ -862,7 +875,11 @@ fun PlaylistDetailScreen(
         PlaylistHeader(
             name = current.name,
             description = current.description,
-            summary = playlistSummary(trackList.size, trackList.sumOf { it.durationMs }, current.createdAt),
+            summary = listOfNotNull(
+                playlistSummary(trackList.size, trackList.sumOf { it.durationMs }, current.createdAt),
+                "${missingRows.size} MISSING".takeIf { missingRows.isNotEmpty() },
+                "${duplicateRows.size} ${if (duplicateRows.size == 1) "DUPLICATE" else "DUPLICATES"}".takeIf { duplicateRows.isNotEmpty() }
+            ).joinToString(" · "),
             cover = { PlaylistCover(current, savedTracks, it.clickable { editing = true }, corner = 10.dp) },
             canPlay = trackList.isNotEmpty(),
             onBack = onBack,
@@ -871,6 +888,15 @@ fun PlaylistDetailScreen(
         ) { close ->
             DropdownMenuItem(text = { Text("Edit details", color = PrimaryText) }, onClick = { close(); editing = true })
             DropdownMenuItem(text = { Text("Add songs", color = PrimaryText) }, onClick = { close(); adding = true })
+            if (missingRows.isNotEmpty()) DropdownMenuItem(
+                text = { Text("Remove missing songs (${missingRows.size})", color = PrimaryText) },
+                onClick = { close(); missingRows.forEach { viewModel.removePlaylistRow(it) } }
+            )
+            // Keeps each song's first copy.
+            if (duplicateRows.isNotEmpty()) DropdownMenuItem(
+                text = { Text("Remove duplicates (${duplicateRows.size})", color = PrimaryText) },
+                onClick = { close(); duplicateRows.forEach { viewModel.removePlaylistRow(it) } }
+            )
             DropdownMenuItem(
                 text = { Text("Listening stats", color = PrimaryText) },
                 onClick = { close(); viewModel.openStatsDetail(StatsKind.PLAYLIST, current.name); showStats = true }
@@ -908,6 +934,7 @@ fun PlaylistDetailScreen(
                   ReorderableItem(reorderState, key = pt.id) { isDragging ->
                     // Marked like All Songs; a song in the playlist twice is marked twice.
                     val isCurrent = pt.trackId == currentTrack?.id
+                    val missing = pt.id in missingRows
                     Surface(
                         shape = RoundedCornerShape(8.dp),
                         color = if (isDragging || isCurrent) TerminalSurfaceElevated else TerminalRaisedPanel,
@@ -926,7 +953,7 @@ fun PlaylistDetailScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
+                            Column(modifier = Modifier.weight(1f).alpha(if (missing) 0.45f else 1f)) {
                                 Text(
                                     text = pt.title,
                                     style = MaterialTheme.typography.bodyMedium,
@@ -936,9 +963,16 @@ fun PlaylistDetailScreen(
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
-                                    text = "${pt.artist} · ${Track.formatDuration(pt.durationMs)}",
+                                    text = listOfNotNull(
+                                        "Not in library".takeIf { missing },
+                                        "Duplicate".takeIf { pt.id in duplicateRows },
+                                        pt.artist,
+                                        Track.formatDuration(pt.durationMs)
+                                    ).joinToString(" · "),
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MutedText
+                                    color = MutedText,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
 

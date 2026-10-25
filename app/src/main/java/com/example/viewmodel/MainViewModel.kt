@@ -57,6 +57,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -549,7 +550,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 albumArtUri = e.albumArtUri
             )
         }
-        val index = tracks.indexOfFirst { it.contentUri == saved.lastTrackUri }
+        // By document id when the address changed (same file, reached through another folder).
+        fun docId(uri: String) = runCatching { android.provider.DocumentsContract.getDocumentId(Uri.parse(uri)) }.getOrNull()
+        val lastDoc = docId(saved.lastTrackUri)
+        val index = tracks.indexOfFirst { it.contentUri == saved.lastTrackUri }.takeIf { it >= 0 }
+            ?: tracks.indexOfFirst { lastDoc != null && docId(it.contentUri) == lastDoc }
         service.playTrackList(
             tracks,
             startIndex = index.coerceAtLeast(0),
@@ -561,7 +566,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun observePlaybackService() {
         val service = playbackService ?: return
         viewModelScope.launch {
-            service.currentTrack.collect { queued ->
+            // By id: the same song at a new address (relinkQueue) isn't a new play.
+            service.currentTrack.distinctUntilChangedBy { it?.id }.collect { queued ->
                 // Tracks rebuilt from playlists/history lack format, bitrate and sample rate;
                 // the scanned library copy has them, so prefer it when the track is still there.
                 val track = queued?.let { q -> allTracks.value.firstOrNull { it.id == q.id } ?: q }
@@ -603,6 +609,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             service.queue.collect {
                 _queue.value = it
                 repository.saveQueue(it)
+            }
+        }
+        viewModelScope.launch {
+            allTracks.collect { library ->
+                if (library.isNotEmpty()) service.relinkQueue(library.associateBy { it.id })
             }
         }
         viewModelScope.launch {

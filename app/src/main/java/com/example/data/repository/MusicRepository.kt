@@ -305,9 +305,14 @@ class MusicRepository(private val context: Context) {
                             if (audioMime != null) {
                                 val lastModified = if (modIdx >= 0) cursor.getLong(modIdx) else 0L
                                 // The type is re-derived for cached tracks too, so older scans pick up fixes.
+                                // The address is too: it names the folder the file was reached through,
+                                // and the cached one may go through a folder that's since been removed.
                                 val cached = known[folderTrackId(childDocId)]
                                     ?.takeIf { lastModified != 0L && it.dateAdded == lastModified }
-                                    ?.copy(mimeType = audioMime)
+                                    ?.copy(
+                                        mimeType = audioMime,
+                                        contentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, childDocId).toString()
+                                    )
                                 dirTracks.add(
                                     cached ?: readFolderTrack(
                                         treeUri, childDocId, name, audioMime, lastModified, folderName
@@ -447,6 +452,15 @@ class MusicRepository(private val context: Context) {
                     albumArtUri = it.albumArtUri
                 )
             })
+            // A song's id is its path, but its address also names the folder it was reached
+            // through; after folders change (Music replaced by Music/J-pop...), saved copies would
+            // point through a folder the app no longer has access to.
+            // shortcut: three small updates per song on every scan; batch them if libraries grow to thousands.
+            tracks.forEach {
+                playlistDao.relink(it.id, it.contentUri, it.albumArtUri)
+                queueDao.relink(it.id, it.contentUri, it.albumArtUri)
+                historyDao.relink(it.id, it.contentUri, it.albumArtUri)
+            }
         }
     }
 
