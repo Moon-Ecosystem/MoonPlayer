@@ -97,8 +97,9 @@ fun PlaylistsScreen(
     val folderPlaylists by viewModel.folderPlaylists.collectAsState()
     val playlistRows by viewModel.playlistRows.collectAsState()
     val accent = LocalAccentColor.current
-    // The playlist the music comes from is marked like the playing song (matched by name, as in the drawer).
-    val playingFrom by viewModel.playingFrom.collectAsState()
+    // The playlist the music comes from is marked like the playing song: yours by id, a folder by name.
+    val playingPlaylistId by viewModel.playingPlaylistId.collectAsState()
+    val playingFolder by viewModel.playingFolder.collectAsState()
     val isPlaying by viewModel.isPlaying.collectAsState()
 
     var showCreateDialog by remember { mutableStateOf(false) }
@@ -231,7 +232,7 @@ fun PlaylistsScreen(
                         item { PlaylistSectionLabel("FOLDERS") }
                     }
                     itemsIndexed(folderPlaylists) { _, (name, tracks) ->
-                        val playing = name == playingFrom
+                        val playing = name == playingFolder
                         Surface(
                             shape = RoundedCornerShape(8.dp),
                             color = if (playing) TerminalSurfaceElevated else TerminalRaisedPanel,
@@ -280,7 +281,7 @@ fun PlaylistsScreen(
                         item { PlaylistSectionLabel("MY PLAYLISTS") }
                     }
                     items(playlists, key = { it.id }) { playlist ->
-                        val playing = playlist.name == playingFrom
+                        val playing = playlist.id == playingPlaylistId
                         Surface(
                             shape = RoundedCornerShape(8.dp),
                             color = if (playing) TerminalSurfaceElevated else TerminalRaisedPanel,

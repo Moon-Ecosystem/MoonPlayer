@@ -21,7 +21,7 @@ import com.example.data.lyrics.LyricsRepository
 import com.example.data.model.Track
 import com.example.data.repository.MusicRepository
 import com.example.data.repository.folderNameFromTreeUri
-import com.example.data.repository.isTrackInFolder
+import com.example.data.repository.folderPlaylistsOf
 import com.example.data.repository.pickQuickPlaylists
 import com.example.data.settings.AccentMode
 import com.example.data.settings.PlayerSettings
@@ -69,7 +69,6 @@ enum class Screen {
     LIBRARY,
     ALBUMS,
     ARTISTS,
-    FOLDERS,
     PLAYLISTS,
     PLAYLIST_DETAIL,
     FAVORITES,
@@ -201,12 +200,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * so it always matches the folder's current contents and needs no stored copy.
      */
     val folderPlaylists: StateFlow<List<Pair<String, List<Track>>>> by lazy {
-        combine(_libraryFolders, allTracks) { folders, tracks ->
-            // Nested folders (e.g. Music and Music/J-pop) each list every track inside them.
-            folders.map { uri ->
-                folderNameFromTreeUri(uri) to tracks.filter { isTrackInFolder(it.contentUri, uri) }
-            }
-        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        // The real folders songs sit in, found inside the library folders: adding Music lists
+        // Music/J-pop and Music/Random, and new subfolders appear after the next scan.
+        allTracks.map(::folderPlaylistsOf)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     }
 
     // Comma-separated folder names for status text; blank when no folder is chosen
@@ -251,15 +248,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /** Up to 4 playlists for the drawer: the one playing, then the most recently played. */
     val quickPlaylists: StateFlow<List<QuickPlaylist>> by lazy {
         combine(
-            allPlaylists, folderPlaylists, repository.recentPlaylistNames, _playingFrom, repository.playlistSongCounts
-        ) { mine, folders, recent, playing, counts ->
+            allPlaylists, folderPlaylists, repository.recentPlaylistNames,
+            combine(_playingFrom, _playingPlaylistId, _playingFolder) { from, id, folder -> Triple(from, id, folder) },
+            repository.playlistSongCounts
+        ) { mine, folders, recent, (playing, playingId, playingFolder), counts ->
             val byName = mine.associateBy { it.name }
             val songsById = counts.associate { it.playlistId to it.songs }
             val folderSizes = folders.toMap().mapValues { it.value.size }
             pickQuickPlaylists(mine.map { it.name } + folders.map { it.first }, recent, playing).map { name ->
                 val playlist = byName[name]
                 val songs = playlist?.let { songsById[it.id] ?: 0 } ?: folderSizes[name] ?: 0
-                QuickPlaylist(name, playlist, songs, playing = name == playing)
+                val isPlaying = if (playlist != null) playlist.id == playingId else name == playingFolder
+                QuickPlaylist(name, playlist, songs, playing = isPlaying)
             }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     }
@@ -361,8 +361,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // Playlist (user or folder) the current queue came from, credited in playlist stats
     private var playingPlaylist: String? = null
 
-    // Your playlist the queue came from, for its own equalizer preset.
+    // Your playlist the queue came from, for its own equalizer preset and the "Playing" mark.
     private val _playingPlaylistId = MutableStateFlow<Long?>(null)
+    val playingPlaylistId = _playingPlaylistId.asStateFlow()
+
+    // The folder playlist the queue came from (folders have no id, so by name); null otherwise,
+    // so a playlist of yours or an album with the same name isn't mistaken for it.
+    private val _playingFolder = MutableStateFlow<String?>(null)
+    val playingFolder = _playingFolder.asStateFlow()
 
     // Listening time goes to the song (and playlist) that was playing, saved on pause and on song change.
     private val listenTimer = ListenTimer { android.os.SystemClock.elapsedRealtime() }
@@ -873,6 +879,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _playingFrom.value = source
         playingPlaylist = source.takeIf { isPlaylist }
         _playingPlaylistId.value = playlistId
+        _playingFolder.value = source.takeIf { isPlaylist && playlistId == null }
         playbackService?.playTrackList(tracks, startIndex)
     }
 
@@ -937,6 +944,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun moveQueueItem(from: Int, to: Int) {
         playbackService?.moveQueueItem(from, to)
+    }
+
+    /** The queue's Play Next: moves an already-queued song to play after the current one, shuffle on or off. */
+    fun playQueueItemNext(from: Int, to: Int) {
+        playbackService?.moveQueueItem(from, to, playNext = true)
     }
 
     fun clearQueue() {

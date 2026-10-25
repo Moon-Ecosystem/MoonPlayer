@@ -29,7 +29,6 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.material.icons.filled.PlaylistAdd
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -80,18 +79,9 @@ fun GroupedTracksScreen(
     modifier: Modifier = Modifier
 ) {
     val allTracks by viewModel.allTracks.collectAsState()
-    val selectedFolderName by viewModel.selectedFolderName.collectAsState()
-    val folderAccessError by viewModel.folderAccessError.collectAsState()
     val accent = LocalAccentColor.current
 
     var selectedGroup by remember { mutableStateOf<String?>(null) }
-    var folderResultInfo by remember { mutableStateOf<Pair<String, Int>?>(null) }
-
-    val pickFolder = rememberFolderPicker { uri, flags ->
-        viewModel.addFolder(uri, flags) { folderName, count ->
-            folderResultInfo = Pair(folderName, count)
-        }
-    }
 
     val groups = remember(allTracks, mode) {
         when (mode) {
@@ -100,7 +90,6 @@ fun GroupedTracksScreen(
             GroupMode.ARTISTS -> allTracks
                 .flatMap { track -> splitArtists(track.artist).map { it to track } }
                 .groupBy({ it.first }, { it.second })
-            GroupMode.FOLDERS -> allTracks.groupBy { it.folderPath }
         }
     }
 
@@ -112,7 +101,6 @@ fun GroupedTracksScreen(
             kind = when (mode) {
                 GroupMode.ALBUMS -> CollectionKind.ALBUM
                 GroupMode.ARTISTS -> CollectionKind.ARTIST
-                GroupMode.FOLDERS -> CollectionKind.FOLDER
             },
             name = selectedGroup!!.ifBlank { "Unknown" },
             givenTracks = tracksForGroup,
@@ -152,94 +140,16 @@ fun GroupedTracksScreen(
                         )
                     }
                 }
-
-                // If Folders Mode, show the folder action button
-                if (mode == GroupMode.FOLDERS) {
-                    Button(
-                        onClick = pickFolder,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = accent,
-                            contentColor = com.example.ui.theme.buttonContentColorFor(accent)
-                        ),
-                        shape = RoundedCornerShape(6.dp),
-                        modifier = Modifier.testTag("link_folder_button")
-                    ) {
-                        Icon(imageVector = Icons.Default.DriveFolderUpload, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            if (selectedFolderName.isBlank()) "Select Folder" else "Add Folder",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
             }
 
             Spacer(modifier = Modifier.height(12.dp))
-
-            // Informational tip when in Folders mode
-            if (mode == GroupMode.FOLDERS) {
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = TerminalRaisedPanel,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, TerminalBorder),
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
-                ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(imageVector = Icons.Default.Folder, contentDescription = null, tint = accent, modifier = Modifier.size(20.dp))
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Text(
-                                text = if (selectedFolderName.isBlank()) {
-                                    "No folder selected. Choose a folder to browse its music."
-                                } else {
-                                    "Library folders: $selectedFolderName"
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = SecondaryText
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "Only music files inside these folders and their subfolders are scanned. Other storage is never accessed.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MutedText
-                        )
-                        folderAccessError?.let { error ->
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                text = error,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.error
-                            )
-                        }
-                    }
-                }
-            }
 
             if (groups.isEmpty()) {
                 Box(
                     modifier = Modifier.fillMaxSize().weight(1f),
                     contentAlignment = Alignment.Center
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(text = "> NO ${mode.title} DISCOVERED", style = MaterialTheme.typography.labelLarge, color = MutedText)
-                        if (mode == GroupMode.FOLDERS) {
-                            Spacer(modifier = Modifier.height(10.dp))
-                            Button(
-                                onClick = pickFolder,
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = accent,
-                                    contentColor = com.example.ui.theme.buttonContentColorFor(accent)
-                                )
-                            ) {
-                                Text(
-                                    if (selectedFolderName.isBlank()) "Select Music Folder" else "Add Folder",
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-                    }
+                    Text(text = "> NO ${mode.title} DISCOVERED", style = MaterialTheme.typography.labelLarge, color = MutedText)
                 }
             } else {
                 LazyColumn(
@@ -281,7 +191,6 @@ fun GroupedTracksScreen(
                                         val icon = when (mode) {
                                             GroupMode.ALBUMS -> Icons.Default.Album
                                             GroupMode.ARTISTS -> Icons.Default.Person
-                                            GroupMode.FOLDERS -> Icons.Default.Folder
                                         }
                                         Icon(imageVector = icon, contentDescription = null, tint = accent, modifier = Modifier.size(24.dp))
                                         sampleTrack?.let {
@@ -314,30 +223,7 @@ fun GroupedTracksScreen(
                                 }
 
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    if (mode == GroupMode.FOLDERS) {
-                                        IconButton(
-                                            onClick = {
-                                                viewModel.createPlaylist(groupKey)
-                                                // add all tracks to newly created playlist
-                                                val plList = viewModel.allPlaylists.value
-                                                val created = plList.firstOrNull { it.name == groupKey }
-                                                if (created != null) {
-                                                    groupTracks.forEach { trk ->
-                                                        viewModel.addTrackToPlaylist(created.id, trk)
-                                                    }
-                                                }
-                                            },
-                                            modifier = Modifier.size(36.dp).minimumInteractiveComponentSize()
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.PlaylistAdd,
-                                                contentDescription = "Import as Playlist",
-                                                tint = accent,
-                                                modifier = Modifier.size(20.dp)
-                                            )
-                                        }
-                                    }
-
+                                    // Copying a folder into a playlist is the folder page's ⋮ › Save as new playlist.
                                     Surface(
                                         onClick = {
                                             viewModel.playTrackList(groupTracks, 0, source = groupKey)
@@ -371,62 +257,10 @@ fun GroupedTracksScreen(
             }
         }
     }
-
-    // FOLDER SCAN RESULT CONFIRMATION DIALOG
-    folderResultInfo?.let { (name, count) ->
-        AlertDialog(
-            onDismissRequest = { folderResultInfo = null },
-            title = { Text("Folder Linked: $name", color = PrimaryText) },
-            text = {
-                Column {
-                    Text(
-                        text = "Successfully discovered $count music file(s) in this folder and its subfolders. Nothing outside the selected folder was scanned.",
-                        color = SecondaryText,
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        val folderTracks = allTracks.filter { it.folderPath == name }
-                        if (folderTracks.isNotEmpty()) {
-                            viewModel.createPlaylist(name)
-                            // Auto-add to playlist
-                            val plList = viewModel.allPlaylists.value
-                            val pl = plList.firstOrNull { it.name == name }
-                            if (pl != null) {
-                                folderTracks.forEach { trk ->
-                                    viewModel.addTrackToPlaylist(pl.id, trk)
-                                }
-                            }
-                        }
-                        folderResultInfo = null
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = accent,
-                        contentColor = com.example.ui.theme.buttonContentColorFor(accent)
-                    )
-                ) {
-                    Text("Import as Playlist", fontWeight = FontWeight.Bold)
-                }
-            },
-            dismissButton = {
-                OutlinedButton(
-                    onClick = { folderResultInfo = null },
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = PrimaryText),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, TerminalBorder)
-                ) {
-                    Text("Keep in Library")
-                }
-            },
-            containerColor = TerminalSurfaceElevated
-        )
-    }
 }
 
+// Folders are on the Playlists screen, one folder playlist per folder that holds songs.
 enum class GroupMode(val title: String) {
     ALBUMS("ALBUMS"),
-    ARTISTS("ARTISTS"),
-    FOLDERS("FOLDERS")
+    ARTISTS("ARTISTS")
 }

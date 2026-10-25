@@ -191,14 +191,6 @@ fun MoonPlayerApp(viewModel: MainViewModel) {
                         )
                     }
 
-                    Screen.FOLDERS -> {
-                        GroupedTracksScreen(
-                            viewModel = viewModel,
-                            mode = GroupMode.FOLDERS,
-                            onBack = { viewModel.navigateTo(Screen.PLAYER) }
-                        )
-                    }
-
                     Screen.FAVORITES -> {
                         CollectionScreen(
                             viewModel = viewModel,

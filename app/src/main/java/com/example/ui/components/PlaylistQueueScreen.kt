@@ -362,7 +362,7 @@ fun PlaylistQueueScreen(
                             ),
                             onPlay = { viewModel.skipToQueueIndex(index) },
                             onPlayNext = playNextTarget(index, currentIndex)?.let { target ->
-                                { viewModel.moveQueueItem(index, target) }
+                                { viewModel.playQueueItemNext(index, target) }
                             },
                             onAddToPlaylist = { viewModel.setTrackToAddToPlaylist(track) },
                             onRemove = { viewModel.removeFromQueue(index) }

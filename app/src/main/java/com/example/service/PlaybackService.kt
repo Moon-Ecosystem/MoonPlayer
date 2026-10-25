@@ -15,6 +15,7 @@ import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.ShuffleOrder.DefaultShuffleOrder
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
@@ -31,6 +32,28 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+/**
+ * Shuffle play order (list indices) after inserting an item at list index [inserted]: later
+ * indices shift up, and the new one plays right after [after] (an index before the insert), or
+ * last when [after] is null.
+ */
+internal fun shuffleOrderWithInsert(order: List<Int>, inserted: Int, after: Int?): IntArray {
+    val shifted = order.map { if (it >= inserted) it + 1 else it }.toMutableList()
+    val at = if (after == null) shifted.size else shifted.indexOf(if (after >= inserted) after + 1 else after) + 1
+    shifted.add(at, inserted)
+    return shifted.toIntArray()
+}
+
+/** Shuffle play order after moving list item [from] to [to], with it playing right after [current]. */
+internal fun shuffleOrderWithMove(order: List<Int>, from: Int, to: Int, current: Int): IntArray {
+    // newIndex[old]: where each list item ends up after the move.
+    val moved = order.indices.toMutableList().apply { add(to, removeAt(from)) }
+    val newIndex = IntArray(order.size).also { arr -> moved.forEachIndexed { new, old -> arr[old] = new } }
+    val result = order.filter { it != from }.map { newIndex[it] }.toMutableList()
+    result.add(result.indexOf(newIndex[current]) + 1, to)
+    return result.toIntArray()
+}
 
 class PlaybackService : MediaSessionService() {
 
@@ -261,14 +284,39 @@ class PlaybackService : MediaSessionService() {
         val insertIdx = if (currIdx >= 0 && currIdx < currentQ.size) currIdx + 1 else currentQ.size
         currentQ.add(insertIdx, track)
         _queue.value = currentQ
-        player.addMediaItem(insertIdx, track.toMediaItem())
+        insertKeepingShuffle(insertIdx, track, after = currIdx.takeIf { it >= 0 })
     }
 
     fun addToQueue(track: Track) {
         val currentQ = _queue.value.toMutableList()
         currentQ.add(track)
         _queue.value = currentQ
-        player.addMediaItem(track.toMediaItem())
+        insertKeepingShuffle(currentQ.lastIndex, track, after = null)
+    }
+
+    /**
+     * Adds the item at [index]. With shuffle on, the player would slot it into a random spot of
+     * its play order, so Play Next could come much later; it goes right after [after] instead
+     * (null: at the end of the order, for Add to Queue).
+     */
+    @OptIn(UnstableApi::class)
+    private fun insertKeepingShuffle(index: Int, track: Track, after: Int?) {
+        val order = if (player.shuffleModeEnabled) shuffledOrder() else null
+        player.addMediaItem(index, track.toMediaItem())
+        order?.let { player.setShuffleOrder(DefaultShuffleOrder(shuffleOrderWithInsert(it, index, after), System.nanoTime())) }
+    }
+
+    /** The list indices in the order shuffle plays them. */
+    private fun shuffledOrder(): List<Int> {
+        val timeline = player.currentTimeline
+        if (timeline.isEmpty) return emptyList()
+        val order = mutableListOf<Int>()
+        var i = timeline.getFirstWindowIndex(true)
+        while (i != C.INDEX_UNSET) {
+            order += i
+            i = timeline.getNextWindowIndex(i, Player.REPEAT_MODE_OFF, true)
+        }
+        return order
     }
 
     // Embedded ID3 artwork is merged in by ExoPlayer at playback; artworkUri covers tracks with
@@ -313,13 +361,18 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
-    fun moveQueueItem(from: Int, to: Int) {
+    /** [playNext]: the queue's Play Next, which with shuffle on also makes it next in play order. */
+    @OptIn(UnstableApi::class)
+    fun moveQueueItem(from: Int, to: Int, playNext: Boolean = false) {
         val currentQ = _queue.value.toMutableList()
         if (from in currentQ.indices && to in currentQ.indices) {
             val item = currentQ.removeAt(from)
             currentQ.add(to, item)
             _queue.value = currentQ
+            val current = player.currentMediaItemIndex
+            val order = if (playNext && player.shuffleModeEnabled && current >= 0) shuffledOrder() else null
             player.moveMediaItem(from, to)
+            order?.let { player.setShuffleOrder(DefaultShuffleOrder(shuffleOrderWithMove(it, from, to, current), System.nanoTime())) }
             // The playing song keeps playing but may now sit at a different position.
             _currentIndex.value = player.currentMediaItemIndex
         }
