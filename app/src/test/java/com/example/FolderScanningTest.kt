@@ -2,6 +2,9 @@ package com.example
 
 import com.example.data.repository.SUPPORTED_FORMAT_LABELS
 import com.example.data.repository.audioFormatLabel
+import com.example.data.model.Track
+import com.example.data.repository.containingFolder
+import com.example.data.repository.folderPlaylistsOf
 import com.example.data.repository.folderNameFromTreeUri
 import com.example.data.repository.formatBreakdown
 import com.example.data.repository.isTrackInFolder
@@ -15,6 +18,29 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class FolderScanningTest {
+
+    @Test
+    fun `folder playlists are the real folders, named by path only when names clash`() {
+        fun song(id: String, folder: String) = Track(id = id, contentUri = id, title = id, artist = "", album = "", durationMs = 0, folderPath = folder)
+        val lists = folderPlaylistsOf(
+            listOf(
+                song("a", "Music/Random"), song("b", "Music/J-pop"), song("c", "Music/J-pop"),
+                song("d", "Music/Live"), song("e", "Videos/Live")
+            )
+        )
+        assertEquals(listOf("J-pop", "Music/Live", "Random", "Videos/Live"), lists.map { it.first })
+        assertEquals(listOf("b", "c"), lists.first().second.map { it.id })
+    }
+
+    @Test
+    fun `a song's folder is where the file sits, not the library folder`() {
+        assertEquals("Music/J-pop", containingFolder("primary:Music/J-pop/song.mp3", "Music"))
+        assertEquals("Music/J-pop/Live", containingFolder("primary:Music/J-pop/Live/song.mp3", "Music"))
+        assertEquals("Music", containingFolder("primary:Music/song.mp3", "Music"))
+        // At the top of the storage, or ids that aren't paths: the library folder's name.
+        assertEquals("Music", containingFolder("primary:song.mp3", "Music"))
+        assertEquals("Music", containingFolder("msf:1234", "Music"))
+    }
 
     @Test
     fun `supported audio is detected by mime type or extension`() {

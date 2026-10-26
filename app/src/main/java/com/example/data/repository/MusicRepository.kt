@@ -164,6 +164,27 @@ fun formatBreakdown(tracks: List<Track>): List<Pair<String, Int>> =
         .sortedByDescending { it.second }
 
 /**
+ * The folder a file sits in, as a path ("Music/J-pop"), read from a path-style document id
+ * ("primary:Music/J-pop/song.mp3"); [fallback] (the library folder's name) for a file at the
+ * top of the storage or a provider whose ids aren't paths.
+ */
+fun containingFolder(docId: String, fallback: String): String =
+    docId.substringAfter(':', "").substringBeforeLast('/', "").ifBlank { fallback }
+
+/**
+ * One folder playlist per folder that directly holds songs, named by the folder's own name, or
+ * by its path when two folders share a name (Music/Live, Videos/Live); sorted by name.
+ */
+fun folderPlaylistsOf(tracks: List<Track>): List<Pair<String, List<Track>>> {
+    val byPath = tracks.groupBy { it.folderPath }
+    val nameCounts = byPath.keys.groupingBy { it.substringAfterLast('/') }.eachCount()
+    return byPath.map { (path, songs) ->
+        val name = path.substringAfterLast('/')
+        (if (nameCounts.getValue(name) > 1) path else name) to songs
+    }.sortedBy { it.first.lowercase() }
+}
+
+/**
  * The folder's cover image among its image file names, e.g. "Cover.jpg" or "folder.png", for
  * songs without embedded artwork. Names earlier in the list win; other images are ignored.
  */
@@ -305,12 +326,20 @@ class MusicRepository(private val context: Context) {
                             if (audioMime != null) {
                                 val lastModified = if (modIdx >= 0) cursor.getLong(modIdx) else 0L
                                 // The type is re-derived for cached tracks too, so older scans pick up fixes.
+                                // The address is too: it names the folder the file was reached through,
+                                // and the cached one may go through a folder that's since been removed.
+                                // So is the folder it sits in, which earlier scans recorded differently.
+                                val folder = containingFolder(childDocId, folderName)
                                 val cached = known[folderTrackId(childDocId)]
                                     ?.takeIf { lastModified != 0L && it.dateAdded == lastModified }
-                                    ?.copy(mimeType = audioMime)
+                                    ?.copy(
+                                        mimeType = audioMime,
+                                        contentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, childDocId).toString(),
+                                        folderPath = folder
+                                    )
                                 dirTracks.add(
                                     cached ?: readFolderTrack(
-                                        treeUri, childDocId, name, audioMime, lastModified, folderName
+                                        treeUri, childDocId, name, audioMime, lastModified, folder
                                     )
                                 )
                             } else if (mime.startsWith("image/")) {
@@ -447,6 +476,15 @@ class MusicRepository(private val context: Context) {
                     albumArtUri = it.albumArtUri
                 )
             })
+            // A song's id is its path, but its address also names the folder it was reached
+            // through; after folders change (Music replaced by Music/J-pop...), saved copies would
+            // point through a folder the app no longer has access to.
+            // shortcut: three small updates per song on every scan; batch them if libraries grow to thousands.
+            tracks.forEach {
+                playlistDao.relink(it.id, it.contentUri, it.albumArtUri)
+                queueDao.relink(it.id, it.contentUri, it.albumArtUri)
+                historyDao.relink(it.id, it.contentUri, it.albumArtUri)
+            }
         }
     }
 

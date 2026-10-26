@@ -1,6 +1,8 @@
 package com.example
 
 import com.example.data.model.Track
+import com.example.service.shuffleOrderWithInsert
+import com.example.service.shuffleOrderWithMove
 import com.example.ui.components.keyedEntries
 import com.example.ui.components.playNextTarget
 import org.junit.Assert.assertEquals
@@ -31,5 +33,17 @@ class QueueKeysTest {
         assertNull(playNextTarget(from = 2, current = 2)) // the current song
         assertNull(playNextTarget(from = 3, current = 2)) // already next
         assertNull(playNextTarget(from = 1, current = -1)) // nothing playing
+    }
+
+    @Test
+    fun `with shuffle on, play next is next in play order`() {
+        // List a,b,c,d (0..3), shuffled play order c,a,d,b; c (2) is playing.
+        val order = listOf(2, 0, 3, 1)
+        // Play Next inserts x at list index 3, right after c; d moves from 3 to 4.
+        assertEquals(listOf(2, 3, 0, 4, 1), shuffleOrderWithInsert(order, inserted = 3, after = 2).toList())
+        // Add to Queue appends x at list index 4: it plays last.
+        assertEquals(listOf(2, 0, 3, 1, 4), shuffleOrderWithInsert(order, inserted = 4, after = null).toList())
+        // The queue's Play Next moves b (1) to list index 2, after c: list a,c,b,d; c is now 1.
+        assertEquals(listOf(1, 2, 0, 3), shuffleOrderWithMove(order, from = 1, to = 2, current = 2).toList())
     }
 }

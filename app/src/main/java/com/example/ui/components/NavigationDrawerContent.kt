@@ -220,16 +220,6 @@ fun NavigationDrawerContent(
                 }
             )
 
-            DrawerItem(
-                icon = Icons.Default.Folder,
-                label = "Folders",
-                isSelected = currentScreen == Screen.FOLDERS,
-                accentColor = accent,
-                onClick = {
-                    viewModel.navigateTo(Screen.FOLDERS)
-                    onCloseDrawer()
-                }
-            )
 
             DrawerItem(
                 icon = Icons.Default.Favorite,
