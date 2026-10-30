@@ -35,6 +35,11 @@ import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.clickable
+import androidx.compose.runtime.remember
+import android.os.Build
+import android.widget.Toast
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -55,12 +60,25 @@ import com.example.ui.theme.TerminalBorder
 import com.example.ui.theme.TerminalRaisedPanel
 import com.example.viewmodel.MainViewModel
 
+/** Copies text to the clipboard; Android 13+ confirms on screen by itself, older versions get a toast. */
+@Composable
+fun rememberCopy(): (String) -> Unit {
+    val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
+    return remember(clipboard, context) {
+        { text ->
+            clipboard.setText(AnnotatedString(text))
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
+        }
+    }
+}
+
 /** Everything known about [track]'s file, from the format badge or the player menu. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SongInfoSheet(viewModel: MainViewModel, track: Track, badge: String, onDismiss: () -> Unit) {
     val accent = LocalAccentColor.current
-    val clipboard = LocalClipboardManager.current
+    val copy = rememberCopy()
     val info by produceState<SongInfo?>(null, track.id) { value = viewModel.songInfo(track) }
     val sections = info?.sections
 
@@ -81,9 +99,10 @@ fun SongInfoSheet(viewModel: MainViewModel, track: Track, badge: String, onDismi
                         Text("SONG INFO", style = MaterialTheme.typography.labelSmall, color = accent, fontFamily = FontFamily.Monospace, letterSpacing = 1.2.sp)
                         Text(track.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = PrimaryText)
                         Text(badge, style = MaterialTheme.typography.labelSmall, color = MutedText, fontFamily = FontFamily.Monospace)
+                        Text("Tap a field to copy it", style = MaterialTheme.typography.labelSmall, color = MutedText)
                     }
                     OutlinedButton(
-                        onClick = { sections?.let { clipboard.setText(AnnotatedString(songInfoText(track.title, it))) } },
+                        onClick = { sections?.let { copy(songInfoText(track.title, it)) } },
                         enabled = sections != null,
                         shape = RoundedCornerShape(8.dp),
                         border = androidx.compose.foundation.BorderStroke(1.dp, TerminalBorder)
@@ -114,7 +133,7 @@ fun SongInfoSheet(viewModel: MainViewModel, track: Track, badge: String, onDismi
                         }
                     )
                 }
-                items(loaded, key = { it.title }) { section -> InfoSectionCard(section) }
+                items(loaded, key = { it.title }) { section -> InfoSectionCard(section, copy) }
             }
             item { Spacer(modifier = Modifier.height(24.dp)) }
         }
@@ -158,7 +177,7 @@ private fun MissingFileCard(onRemove: () -> Unit, onRescan: () -> Unit) {
 }
 
 @Composable
-private fun InfoSectionCard(section: InfoSection) {
+private fun InfoSectionCard(section: InfoSection, copy: (String) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(section.title, style = MaterialTheme.typography.labelSmall, color = MutedText, fontFamily = FontFamily.Monospace, letterSpacing = 1.2.sp)
         Surface(
@@ -166,10 +185,15 @@ private fun InfoSectionCard(section: InfoSection) {
             color = TerminalBlack,
             border = androidx.compose.foundation.BorderStroke(1.dp, TerminalBorder)
         ) {
-            Column(modifier = Modifier.padding(horizontal = 12.dp)) {
+            Column {
                 section.rows.forEachIndexed { i, (name, value) ->
-                    if (i > 0) HorizontalDivider(color = TerminalBorder.copy(alpha = 0.6f))
-                    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 7.dp)) {
+                    if (i > 0) HorizontalDivider(color = TerminalBorder.copy(alpha = 0.6f), modifier = Modifier.padding(horizontal = 12.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(onClickLabel = "Copy $name") { copy(value) }
+                            .padding(horizontal = 12.dp, vertical = 7.dp)
+                    ) {
                         Text(name, style = MaterialTheme.typography.bodySmall, color = SecondaryText, modifier = Modifier.width(112.dp))
                         Text(value, style = MaterialTheme.typography.bodySmall, color = PrimaryText, fontFamily = FontFamily.Monospace, modifier = Modifier.weight(1f))
                     }

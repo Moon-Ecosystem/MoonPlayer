@@ -5,6 +5,9 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -156,9 +159,11 @@ private class LyricsScrollGuard : NestedScrollConnection {
     override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource) = available
 }
 
+@OptIn(ExperimentalFoundationApi::class) // combinedClickable, for long press to copy a line
 @Composable
 private fun SyncedLyrics(viewModel: MainViewModel, lines: List<LyricLine>, source: LyricsSource) {
     val position = viewModel.currentPositionMs.collectAsState()
+    val copy = rememberCopy()
     // Changes only when the sung line changes, not on every position tick.
     val current by remember(lines) { derivedStateOf { currentLineIndex(lines, position.value) } }
     val listState = rememberLazyListState()
@@ -197,8 +202,13 @@ private fun SyncedLyrics(viewModel: MainViewModel, lines: List<LyricLine>, sourc
                 fontWeight = FontWeight.Bold,
                 // Only as wide as its words: tap the words to jump the song there; the space
                 // beside a short line counts as empty and returns to the art.
+                // Long press copies the line.
                 modifier = Modifier
-                    .clickable { viewModel.seekTo(line.timeMs) }
+                    .combinedClickable(
+                        onLongClickLabel = "Copy line",
+                        onLongClick = { if (line.text.isNotBlank()) copy(line.text) },
+                        onClick = { viewModel.seekTo(line.timeMs) }
+                    )
                     .padding(vertical = 7.dp)
             )
         }
@@ -216,7 +226,10 @@ private fun PlainLyrics(text: String, source: LyricsSource) {
             .verticalScroll(rememberScrollState())
             .padding(start = 18.dp, end = 18.dp, top = 48.dp, bottom = 16.dp)
     ) {
-        Text(text = text, color = PrimaryText, fontSize = 17.sp, lineHeight = 25.sp, fontWeight = FontWeight.SemiBold)
+        // Long press selects words to copy, as in any text.
+        SelectionContainer {
+            Text(text = text, color = PrimaryText, fontSize = 17.sp, lineHeight = 25.sp, fontWeight = FontWeight.SemiBold)
+        }
         SourceLabel(source, synced = false)
     }
 }

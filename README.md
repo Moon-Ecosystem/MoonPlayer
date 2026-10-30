@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="app/src/main/res/drawable-nodpi/ic_launcher_cat.png" alt="Moon Player logo" width="96"/>
+<img src=".github/icon.png" alt="Moon Player logo" width="96"/>
 
 # Moon Player
 
