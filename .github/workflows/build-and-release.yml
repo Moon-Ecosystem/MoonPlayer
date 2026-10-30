@@ -91,9 +91,12 @@ jobs:
 
       - name: Build Android APK
         run: |
-          # The app shows the alpha as its version name; versionCode comes from the commit count.
+          # The app shows the alpha, or a v* tag without its "v" (v0.1 -> 0.1), as its version
+          # name; versionCode comes from the commit count.
           if [ -n "${{ steps.alpha.outputs.number }}" ]; then
             VERSION_ARGS="-PappVersionName=alpha-${{ steps.alpha.outputs.number }}"
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION_ARGS="-PappVersionName=${GITHUB_REF_NAME#v}"
           fi
           ./gradlew assembleRelease --stacktrace $VERSION_ARGS
         env:
