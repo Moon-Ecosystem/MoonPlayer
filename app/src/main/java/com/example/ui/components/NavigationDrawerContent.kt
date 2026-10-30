@@ -306,7 +306,7 @@ private fun QuickPlaylistRow(
         if (item.playlist != null) {
             PlaylistCover(item.playlist, rows, Modifier.size(36.dp), corner = 6.dp)
         } else {
-            TracksCover(folderTracks, Modifier.size(36.dp), corner = 6.dp)
+            TracksCover(folderTracks, Modifier.size(36.dp), corner = 6.dp, icon = Icons.Default.Folder)
         }
         Spacer(modifier = Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {

@@ -31,6 +31,11 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DriveFolderUpload
+import androidx.compose.material.icons.filled.Album
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Shuffle
@@ -247,7 +252,7 @@ fun PlaylistsScreen(
                                     .padding(horizontal = 14.dp, vertical = 12.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                TracksCover(tracks, Modifier.size(48.dp), corner = 6.dp)
+                                TracksCover(tracks, Modifier.size(48.dp), corner = 6.dp, icon = Icons.Default.Folder)
                                 Spacer(modifier = Modifier.width(12.dp))
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
@@ -689,7 +694,16 @@ fun CollectionScreen(
             name = name,
             description = "",
             summary = collectionSummary(kind, tracks),
-            cover = { TracksCover(tracks, it, corner = 10.dp) },
+            cover = {
+                val icon = when (kind) {
+                    CollectionKind.FOLDER -> Icons.Default.Folder
+                    CollectionKind.ALBUM -> Icons.Default.Album
+                    CollectionKind.ARTIST -> Icons.Default.Person
+                    CollectionKind.FAVORITES -> Icons.Default.Favorite
+                    CollectionKind.HISTORY -> Icons.Default.History
+                }
+                TracksCover(tracks, it, corner = 10.dp, icon = icon)
+            },
             canPlay = tracks.isNotEmpty(),
             onBack = onBack,
             onPlay = { play(tracks, 0) },

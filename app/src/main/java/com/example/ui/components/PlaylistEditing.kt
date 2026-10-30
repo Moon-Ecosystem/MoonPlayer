@@ -63,6 +63,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -102,20 +103,25 @@ fun PlaylistCover(playlist: PlaylistEntity, rows: List<PlaylistTrackEntity>, mod
     CoverImage(fixed, albums, modifier, corner)
 }
 
-/** A read-only collection's cover (folder, album, artist...): the automatic grid of its songs' covers. */
+/**
+ * A read-only collection's cover (folder, album, artist...): the automatic grid of its songs'
+ * covers, over [icon] for songs without artwork.
+ */
 @Composable
-fun TracksCover(tracks: List<Track>, modifier: Modifier, corner: Dp = 8.dp) {
+fun TracksCover(tracks: List<Track>, modifier: Modifier, corner: Dp = 8.dp, icon: ImageVector = Icons.Default.PlaylistPlay) {
     val albums = remember(tracks) { tracks.distinctBy { it.album.ifBlank { it.contentUri } }.take(4).map { it.artModel } }
-    CoverImage(null, albums, modifier, corner)
+    CoverImage(null, albums, modifier, corner, icon)
 }
 
-/** [fixed] when set, else a 2×2 grid of four [albums] covers, one cover, or an icon. */
+/** [fixed] when set, else a 2×2 grid of four [albums] covers or one cover; [icon] shows wherever there's no art. */
 @Composable
-private fun CoverImage(fixed: Any?, albums: List<Any>, modifier: Modifier, corner: Dp) {
+private fun CoverImage(fixed: Any?, albums: List<Any>, modifier: Modifier, corner: Dp, icon: ImageVector = Icons.Default.PlaylistPlay) {
     Box(
         modifier.clip(RoundedCornerShape(corner)).background(TerminalRaisedPanel),
         contentAlignment = Alignment.Center
     ) {
+        // Underneath: songs without artwork load nothing, which would leave an empty tile.
+        Icon(icon, null, tint = MutedText, modifier = Modifier.fillMaxSize(0.5f))
         when {
             fixed != null ->
                 AsyncImage(fixed, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
@@ -130,7 +136,6 @@ private fun CoverImage(fixed: Any?, albums: List<Any>, modifier: Modifier, corne
             }
             albums.isNotEmpty() ->
                 AsyncImage(albums.first(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-            else -> Icon(Icons.Default.PlaylistPlay, null, tint = MutedText, modifier = Modifier.fillMaxSize(0.5f))
         }
     }
 }
