@@ -18,18 +18,20 @@ import java.net.URL
 import java.net.URLEncoder
 
 /** Where a song's lyrics came from, shown under the lyrics. */
-enum class LyricsSource(val label: String) { LRC_FILE("Local .lrc file"), LRCLIB("LRCLIB") }
+enum class LyricsSource(val label: String) { LRC_FILE("Local .lrc file"), EMBEDDED("In the file"), LRCLIB("LRCLIB") }
 
 sealed interface LyricsLookup {
     /**
-     * [kind] is the version shown (null for a local .lrc or plain text); [available] lists the
-     * kinds this song has, for the Original / Romaji / Translation switch.
+     * [shown] is the version on screen (null for a local .lrc); [available] lists every version
+     * offered, the file's first within a kind, for the switch. [fileToggle] is set when this song
+     * can show (or hide again) file versions that LRCLIB's synced ones hide.
      */
     data class Found(
         val lyrics: Lyrics,
         val source: LyricsSource,
-        val kind: LyricsKind? = null,
-        val available: Set<LyricsKind> = emptySet()
+        val shown: LyricsVersion? = null,
+        val available: List<LyricsVersion> = emptyList(),
+        val fileToggle: FileLyricsToggle? = null
     ) : LyricsLookup
     data object NotFound : LyricsLookup
     /**
@@ -39,66 +41,158 @@ sealed interface LyricsLookup {
     data class Unavailable(val busy: Boolean) : LyricsLookup
 }
 
+/** What the per-song pill at the end of the lyrics switch does. */
+enum class FileLyricsToggle { SHOW, HIDE }
+
 /** LRCLIB answered "busy" (503/429) even after a retry. */
 private class LrclibBusyException : IOException("LRCLIB is busy")
 
 /**
- * Finds lyrics for a track: a same-named .lrc beside the file first, then a saved earlier
- * result, then (only when [online]) LRCLIB. Online results, including "none", are saved so
- * each song is looked up once.
+ * Finds lyrics for a track: a same-named .lrc beside the file wins outright. Otherwise the
+ * versions in the file's own tags and LRCLIB's (a saved earlier result, or a lookup when
+ * [online] and the file has no synced lyrics) are offered together, the file's first. Online
+ * results, including "none", are saved so each song is looked up once.
  */
 class LyricsRepository(private val context: Context, private val dao: LyricsDao) {
 
-    /** [preferRomaji]: show romaji over the original script when the song has both. */
-    suspend fun find(track: Track, online: Boolean, preferRomaji: Boolean): LyricsLookup = withContext(Dispatchers.IO) {
+    /**
+     * [preferRomaji]: show romaji over the original script when the song has both.
+     * [keepFileLyrics] (for every song) or [keepFileLyricsForSong]: offer the file's plain
+     * versions even where LRCLIB has them synced.
+     */
+    suspend fun find(
+        track: Track,
+        online: Boolean,
+        preferRomaji: Boolean,
+        keepFileLyrics: Boolean = false,
+        keepFileLyricsForSong: Boolean = false
+    ): LyricsLookup = withContext(Dispatchers.IO) {
         readSiblingLrc(track)?.let { text ->
-            toLyrics(text)?.let { return@withContext LyricsLookup.Found(it, LyricsSource.LRC_FILE) }
+            lyricsFromText(text)?.let { return@withContext LyricsLookup.Found(it, LyricsSource.LRC_FILE) }
         }
-        val saved = dao.get(track.id) ?: run {
-            if (!online) return@withContext LyricsLookup.NotFound
-            val fetched = try {
-                fetchFromLrclib(track)
+        val versions = LinkedHashMap<LyricsVersion, Lyrics>()
+        embeddedVersions(track).forEach { (kind, lyrics) -> versions[LyricsVersion(kind, LyricsSource.EMBEDDED)] = lyrics }
+
+        val row = dao.get(track.id)
+        var unavailable: LyricsLookup.Unavailable? = null
+        // A row that only holds a version choice isn't an LRCLIB answer. Synced lyrics in the file
+        // already follow the song, so LRCLIB is only asked when the file has none.
+        val fileSynced = versions.values.any { it is Lyrics.Synced }
+        val lrclib = row?.takeIf { it.source == LyricsSource.LRCLIB.name } ?: if (online && !fileSynced) {
+            try {
+                val fetched = fetchFromLrclib(track)
+                LyricsEntity(
+                    trackId = track.id,
+                    originalLrc = fetched.versions[LyricsKind.ORIGINAL],
+                    romajiLrc = fetched.versions[LyricsKind.ROMAJI],
+                    translationLrc = fetched.versions[LyricsKind.TRANSLATION],
+                    plain = fetched.plain,
+                    chosenKind = row?.chosenKind,
+                    source = LyricsSource.LRCLIB.name,
+                    fetchedAt = System.currentTimeMillis()
+                ).also { dao.put(it) }
             } catch (e: IOException) {
+                // With lyrics from the file there's still something to show; nothing is saved, so it's tried again next time.
                 Log.w(TAG, "LRCLIB lookup failed: ${e.message}")
-                return@withContext LyricsLookup.Unavailable(busy = e is LrclibBusyException)
+                unavailable = LyricsLookup.Unavailable(busy = e is LrclibBusyException)
+                null
             }
-            LyricsEntity(
-                trackId = track.id,
-                originalLrc = fetched.versions[LyricsKind.ORIGINAL],
-                romajiLrc = fetched.versions[LyricsKind.ROMAJI],
-                translationLrc = fetched.versions[LyricsKind.TRANSLATION],
-                plain = fetched.plain,
-                chosenKind = null,
-                source = LyricsSource.LRCLIB.name,
-                fetchedAt = System.currentTimeMillis()
-            ).also { dao.put(it) }
+        } else null
+        lrclib?.let { saved -> lrclibVersions(saved).forEach { (kind, lyrics) -> versions[LyricsVersion(kind, LyricsSource.LRCLIB)] = lyrics } }
+
+        val offered = withoutShadowedPlain(versions, keepAll = keepFileLyrics || keepFileLyricsForSong)
+        // Only the per-song choice can be undone from the lyrics; the setting is changed in Settings.
+        val fileToggle = when {
+            keepFileLyrics -> null
+            keepFileLyricsForSong -> FileLyricsToggle.HIDE.takeIf { withoutShadowedPlain(versions).size < versions.size }
+            else -> FileLyricsToggle.SHOW.takeIf { offered.size < versions.size }
         }
-        fromSaved(saved, preferRomaji)
+        val shown = chooseVersion(offered.keys.toList(), parseChoice(row?.chosenKind), preferRomaji)
+            ?: return@withContext unavailable ?: LyricsLookup.NotFound
+        LyricsLookup.Found(offered.getValue(shown), shown.source, shown, offered.keys.toList(), fileToggle)
     }
 
-    /** Remembers which version to show for this song. */
-    suspend fun choose(trackId: String, kind: LyricsKind) = withContext(Dispatchers.IO) {
-        dao.setChosenKind(trackId, kind.name)
+    /**
+     * Song info rows: what lyrics the song has in each place, synced or not, and which one the
+     * lyrics view shows. Never goes online; a song LRCLIB hasn't been asked about says so.
+     */
+    suspend fun describe(
+        track: Track,
+        onlineLyrics: Boolean?,
+        preferRomaji: Boolean,
+        keepFileLyrics: Boolean,
+        keepFileLyricsForSong: Boolean
+    ): List<Pair<String, String>> = withContext(Dispatchers.IO) {
+        fun sync(l: Lyrics) = if (l is Lyrics.Synced) "synced" else "not synced"
+        val lookup = find(track, online = false, preferRomaji, keepFileLyrics, keepFileLyricsForSong) as? LyricsLookup.Found
+        val offered = lookup?.available.orEmpty()
+
+        val lrc = readSiblingLrc(track)?.let(::lyricsFromText)
+        val embedded = embeddedVersions(track)
+        val saved = dao.get(track.id)?.takeIf { it.source == LyricsSource.LRCLIB.name }
+        listOf(
+            ".lrc file" to (lrc?.let { "Yes, ${sync(it)}" } ?: "None"),
+            "In the file" to (
+                embedded.takeIf { it.isNotEmpty() }?.joinToString(", ") { (kind, l) ->
+                    val hidden = lrc == null && LyricsVersion(kind, LyricsSource.EMBEDDED) !in offered
+                    "${kind.label} (${sync(l)}${if (hidden) ", hidden by LRCLIB's synced" else ""})"
+                } ?: "None"
+            ),
+            "LRCLIB" to when {
+                saved != null -> lrclibVersions(saved).takeIf { it.isNotEmpty() }
+                    ?.entries?.joinToString(", ") { (kind, l) -> "${kind.label} (${sync(l)})" } ?: "Has none"
+                onlineLyrics != true -> "Not looked up · online lyrics off"
+                else -> "Not looked up yet"
+            },
+            "In use" to when {
+                lookup == null -> "None"
+                lookup.shown == null -> "${lookup.source.label}, ${sync(lookup.lyrics)}"
+                else -> "${lookup.shown.kind.label} from ${if (lookup.source == LyricsSource.EMBEDDED) "the file" else lookup.source.label}, ${sync(lookup.lyrics)}"
+            }
+        )
+    }
+
+    /** Remembers which version to show for this song, even before (or without) an LRCLIB lookup. */
+    suspend fun choose(trackId: String, version: LyricsVersion) = withContext(Dispatchers.IO) {
+        val choice = encodeChoice(version)
+        if (dao.get(trackId) != null) {
+            dao.setChosenKind(trackId, choice)
+        } else {
+            dao.put(LyricsEntity(trackId, null, null, null, null, choice, source = CHOICE_ONLY, fetchedAt = 0))
+        }
     }
 
     /** Forgets a saved result so the next [find] looks the song up again. */
     suspend fun forget(trackId: String) = withContext(Dispatchers.IO) { dao.delete(trackId) }
 
-    private fun fromSaved(saved: LyricsEntity, preferRomaji: Boolean): LyricsLookup {
-        val versions = mapOf(
+    /** LRCLIB's synced versions by kind; its plain text stands in as the original when it has none. */
+    private fun lrclibVersions(saved: LyricsEntity): Map<LyricsKind, Lyrics> {
+        val synced = mapOf(
             LyricsKind.ORIGINAL to saved.originalLrc,
             LyricsKind.ROMAJI to saved.romajiLrc,
             LyricsKind.TRANSLATION to saved.translationLrc
         ).mapNotNull { (kind, lrc) -> lrc?.let(::parseLrc)?.let { kind to Lyrics.Synced(it) } }.toMap()
-        val chosen = saved.chosenKind?.let { runCatching { LyricsKind.valueOf(it) }.getOrNull() }
-        val kind = chooseLyricsKind(versions.keys, chosen, preferRomaji)
-        if (kind != null) return LyricsLookup.Found(versions.getValue(kind), LyricsSource.LRCLIB, kind, versions.keys)
-        return saved.plain?.let(::toLyrics)?.let { LyricsLookup.Found(it, LyricsSource.LRCLIB) } ?: LyricsLookup.NotFound
+        if (synced.isNotEmpty()) return synced
+        return saved.plain?.let(::lyricsFromText)?.let { mapOf(LyricsKind.ORIGINAL to it) } ?: emptyMap()
     }
 
-    /** Synced when the text has timestamps, else plain; null for blank text. */
-    private fun toLyrics(text: String): Lyrics? =
-        parseLrc(text)?.let { Lyrics.Synced(it) } ?: text.takeIf { it.isNotBlank() }?.let { Lyrics.Plain(it.trim()) }
+    /** The lyrics tags in the audio file, one per kind (synced beats plain), in kind order. */
+    private fun embeddedVersions(track: Track): List<Pair<LyricsKind, Lyrics>> {
+        val tags = try {
+            context.contentResolver.openInputStream(Uri.parse(track.contentUri))?.use { readId3Lyrics(it.buffered()) }.orEmpty()
+        } catch (e: Exception) {
+            // Unreadable file or lost access: the song simply has no lyrics of its own.
+            Log.w(TAG, "Couldn't read lyrics tags (${e.javaClass.simpleName})")
+            emptyList()
+        }
+        return sortEmbedded(tags, track.title)
+    }
+
+    private companion object {
+        const val TAG = "LyricsRepository"
+        /** A lyrics row saved only to remember the chosen version; LRCLIB hasn't been asked. */
+        const val CHOICE_ONLY = "CHOICE"
+    }
 
     private fun readSiblingLrc(track: Track): String? = try {
         val audio = Uri.parse(track.contentUri)
@@ -199,9 +293,5 @@ class LyricsRepository(private val context: Context, private val dao: LyricsDao)
             delay(1_500)
         }
         throw LrclibBusyException()
-    }
-
-    private companion object {
-        const val TAG = "LyricsRepository"
     }
 }

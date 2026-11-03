@@ -14,8 +14,8 @@ import androidx.lifecycle.viewModelScope
 import androidx.media3.common.Player
 import com.example.data.db.PlaylistEntity
 import com.example.data.db.PlaylistTrackEntity
-import com.example.data.lyrics.LyricsKind
 import com.example.data.lyrics.LyricsLookup
+import com.example.data.lyrics.LyricsVersion
 import com.example.data.lyrics.prefersLatinLyrics
 import com.example.data.lyrics.LyricsRepository
 import com.example.data.model.Track
@@ -572,17 +572,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** Shows another version (original / romaji / translation) and remembers it for the song. */
-    fun showLyricsKind(kind: LyricsKind) {
+    /** Shows another version (the file's or LRCLIB's original / romaji / translation) and remembers it for the song. */
+    fun showLyricsVersion(version: LyricsVersion) {
         val track = _currentTrack.value ?: return
         viewModelScope.launch {
-            lyricsRepository.choose(track.id, kind)
+            lyricsRepository.choose(track.id, version)
             loadLyrics(showSpinner = false)
         }
     }
 
     fun setPreferRomaji(enabled: Boolean) {
         viewModelScope.launch { settingsManager.setPreferRomaji(enabled) }
+    }
+
+    /** Hiding scrobbles also leaves the stats page on this phone's side. */
+    fun setShowScrobbles(enabled: Boolean) {
+        if (!enabled) setStatsOnline(false)
+        viewModelScope.launch { settingsManager.setShowScrobbles(enabled) }
+    }
+
+    fun setQueueShowPlayed(enabled: Boolean) {
+        viewModelScope.launch { settingsManager.setQueueShowPlayed(enabled) }
+    }
+
+    fun setKeepFileLyrics(enabled: Boolean) {
+        viewModelScope.launch { settingsManager.setKeepFileLyrics(enabled) }
+    }
+
+    /** Shows (or hides again) the file's own lyrics beside LRCLIB's for the current song only. */
+    fun setFileLyricsForSong(keep: Boolean) {
+        val track = _currentTrack.value ?: return
+        viewModelScope.launch {
+            settingsManager.setFileLyricsForSong(track.id, keep)
+            loadLyrics(showSpinner = false)
+        }
     }
 
     /** The romaji preference in effect: the user's setting, else the phone's language. */
@@ -596,7 +619,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (showSpinner) _lyricsState.value = LyricsUiState.Loading
             val saved = settingsManager.settingsFlow.first()
             val allowed = online ?: saved.onlineLyrics
-            val lookup = lyricsRepository.find(track, online = allowed == true, preferRomaji = effectivePreferRomaji(saved))
+            val lookup = lyricsRepository.find(
+                track,
+                online = allowed == true,
+                preferRomaji = effectivePreferRomaji(saved),
+                keepFileLyrics = saved.keepFileLyrics,
+                keepFileLyricsForSong = track.id in saved.fileLyricsSongs
+            )
             _lyricsState.value = if (allowed == null && lookup !is LyricsLookup.Found) {
                 LyricsUiState.AskOnline
             } else {
@@ -1205,7 +1234,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /** The song info sheet: the file's own details, then its plays in Moon Player. */
     suspend fun songInfo(track: Track): SongInfo {
-        val info = readSongInfo(getApplication(), track)
+        val read = readSongInfo(getApplication(), track)
+        val s = settingsManager.settingsFlow.first()
+        // A missing file has no lyrics to read; only list them for files that are there.
+        val info = if (read.missing) read else read.copy(
+            sections = read.sections + InfoSection(
+                "LYRICS",
+                lyricsRepository.describe(
+                    track,
+                    onlineLyrics = s.onlineLyrics,
+                    preferRomaji = effectivePreferRomaji(s),
+                    keepFileLyrics = s.keepFileLyrics,
+                    keepFileLyricsForSong = track.id in s.fileLyricsSongs
+                )
+            )
+        )
         val history = repository.historySince(0L).first()
         val played = detailStats(history, StatsKind.TRACK, track.id, StatsRange.ALL, System.currentTimeMillis())
         val stats = played.stats.tracks.firstOrNull() ?: return info

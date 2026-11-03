@@ -109,16 +109,112 @@ fun pickLyricsVersions(
         !it.syncedLyrics.isNullOrBlank() &&
             (trackDurationSec <= 0 || abs(it.durationSec - trackDurationSec) <= toleranceSec)
     }
-    val nonLatinSong = (title.any { it.isLetter() } && latinShare(title) < 0.5) ||
-        fitting.any { latinShare(it.syncedLyrics!!) < 0.5 }
-    fun kindOf(lrc: String) = when {
-        !nonLatinSong || latinShare(lrc) < 0.5 -> LyricsKind.ORIGINAL
-        looksLikeRomaji(lrc) -> LyricsKind.ROMAJI
-        else -> LyricsKind.TRANSLATION
+    val kinds = lyricsKinds(fitting.map { it.syncedLyrics!! }, title)
+    return fitting.indices.groupBy { kinds[it] }.mapValues { (_, versions) ->
+        versions.map { fitting[it] }
+            .minBy { if (trackDurationSec <= 0) 0.0 else abs(it.durationSec - trackDurationSec) }.syncedLyrics!!
     }
-    return fitting.groupBy { kindOf(it.syncedLyrics!!) }.mapValues { (_, versions) ->
-        versions.minBy { if (trackDurationSec <= 0) 0.0 else abs(it.durationSec - trackDurationSec) }.syncedLyrics!!
+}
+
+/**
+ * The kind of each of a song's lyrics [texts]. A song counts as non-Latin when its [title] is, or
+ * any text is in another script; only then are Latin texts sorted into romaji and translation.
+ * [labels] (a tag's description or heading line) win when they say "romaji" or "translation".
+ */
+fun lyricsKinds(texts: List<String>, title: String, labels: List<String> = emptyList()): List<LyricsKind> {
+    val nonLatinSong = (title.any { it.isLetter() } && latinShare(title) < 0.5) || texts.any { latinShare(it) < 0.5 }
+    return texts.mapIndexed { i, text ->
+        val label = labels.getOrNull(i).orEmpty().lowercase()
+        when {
+            ROMAJI_LABELS.any { it in label } -> LyricsKind.ROMAJI
+            TRANSLATION_LABELS.any { it in label } -> LyricsKind.TRANSLATION
+            !nonLatinSong || latinShare(text) < 0.5 -> LyricsKind.ORIGINAL
+            looksLikeRomaji(text) -> LyricsKind.ROMAJI
+            else -> LyricsKind.TRANSLATION
+        }
     }
+}
+
+// Genius heads its romanisations "…羅馬拼音歌詞" and translations "…英語翻訳" / "English Translation".
+private val ROMAJI_LABELS = listOf("roma", "羅馬", "ローマ字")
+private val TRANSLATION_LABELS = listOf("translat", "翻訳", "翻譯", "번역")
+
+/** Synced when the text has timestamps, else plain; null for blank text. */
+fun lyricsFromText(text: String): Lyrics? =
+    parseLrc(text)?.let { Lyrics.Synced(it) } ?: text.takeIf { it.isNotBlank() }?.let { Lyrics.Plain(it.trim()) }
+
+/**
+ * A heading like "[YOASOBI「群青」歌詞]" that Genius puts before the words: a label for the
+ * version, not something sung. Null when the text doesn't start with one.
+ */
+fun lyricsHeading(text: String): String? =
+    text.trimStart().lineSequence().firstOrNull()?.trim()?.takeIf { HEADING.matches(it) }
+
+private val HEADING = Regex("""^\[[^\]]*(歌詞|Lyrics|Romaniz|Translation)[^\]]*]$""", RegexOption.IGNORE_CASE)
+
+/** Plain text lyrics without a [lyricsHeading]. */
+fun withoutHeading(text: String): String =
+    if (lyricsHeading(text) == null) text else text.trimStart().substringAfter('\n', "").trimStart('\n')
+
+/** One version the lyrics switch can show: what it is and where it came from. */
+data class LyricsVersion(val kind: LyricsKind, val source: LyricsSource)
+
+/**
+ * A file's lyrics tags as one version per kind, in kind order. Plain text loses its Genius
+ * heading, which (with the tag's description) helps tell romaji and translations apart; when a
+ * kind turns up twice, synced beats plain, then the first tag wins.
+ */
+fun sortEmbedded(tags: List<EmbeddedLyrics>, title: String): List<Pair<LyricsKind, Lyrics>> {
+    val cleaned = tags.map { tag ->
+        when (val l = tag.lyrics) {
+            is Lyrics.Synced -> Triple(l, l.lines.joinToString("\n") { it.text }, tag.description)
+            is Lyrics.Plain -> {
+                val heading = lyricsHeading(l.text).orEmpty()
+                val body = withoutHeading(l.text).trim()
+                Triple(Lyrics.Plain(body), body, tag.description + " " + heading)
+            }
+        }
+    }.filter { it.second.isNotBlank() }
+    val kinds = lyricsKinds(cleaned.map { it.second }, title, cleaned.map { it.third })
+    return cleaned.indices.groupBy { kinds[it] }
+        .mapValues { (_, ids) -> (ids.firstOrNull { cleaned[it].first is Lyrics.Synced } ?: ids.first()).let { cleaned[it].first } }
+        .toSortedMap()
+        .toList()
+}
+
+/**
+ * The versions worth offering, by kind (the file's first within one). Unless [keepAll], a plain
+ * one from the file is dropped when LRCLIB has that kind synced, so the switch doesn't show two
+ * "Original"s where one is simply better.
+ */
+fun withoutShadowedPlain(versions: Map<LyricsVersion, Lyrics>, keepAll: Boolean = false): Map<LyricsVersion, Lyrics> {
+    val syncedOnline = versions.filter { it.key.source == LyricsSource.LRCLIB && it.value is Lyrics.Synced }.keys.map { it.kind }.toSet()
+    return versions
+        .filterNot { (v, l) -> !keepAll && v.source == LyricsSource.EMBEDDED && l is Lyrics.Plain && v.kind in syncedOnline }
+        .toList()
+        .sortedWith(compareBy({ it.first.kind }, { it.first.source != LyricsSource.EMBEDDED }))
+        .toMap()
+}
+
+/**
+ * Which version to show: the one picked for this song, else the kind [chooseLyricsKind] picks
+ * (a picked kind still counts if its source went away), from the file when it has that kind.
+ */
+fun chooseVersion(available: List<LyricsVersion>, chosen: LyricsVersion?, preferRomaji: Boolean): LyricsVersion? {
+    chosen?.takeIf { it in available }?.let { return it }
+    val kind = chooseLyricsKind(available.map { it.kind }.toSet(), chosen?.kind, preferRomaji) ?: return null
+    return available.first { it.kind == kind }
+}
+
+/** Saved as the kind alone for LRCLIB (what older versions wrote), "EMBEDDED:KIND" for the file. */
+fun encodeChoice(version: LyricsVersion): String =
+    if (version.source == LyricsSource.LRCLIB) version.kind.name else "${version.source.name}:${version.kind.name}"
+
+fun parseChoice(saved: String?): LyricsVersion? {
+    saved ?: return null
+    val source = if (':' in saved) runCatching { LyricsSource.valueOf(saved.substringBefore(':')) }.getOrNull() else LyricsSource.LRCLIB
+    val kind = runCatching { LyricsKind.valueOf(saved.substringAfter(':')) }.getOrNull()
+    return if (source != null && kind != null) LyricsVersion(kind, source) else null
 }
 
 /**

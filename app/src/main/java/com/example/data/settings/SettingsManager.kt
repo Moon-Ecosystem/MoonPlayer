@@ -35,6 +35,8 @@ data class PlayerSettings(
     val showRemainingTime: Boolean = false,
     // Tapping the player's format badge opens the song info sheet.
     val badgeOpensSongInfo: Boolean = true,
+    // The queue opens with its Played section unfolded.
+    val queueShowPlayed: Boolean = false,
     val lastTrackUri: String = "",
     val lastPositionMs: Long = 0L,
     val repeatMode: Int = 0, // 0 = off, 1 = one, 2 = all
@@ -49,9 +51,15 @@ data class PlayerSettings(
     val onlineLyrics: Boolean? = null,
     // null = follow the phone's language (romaji unless it reads the song's own script)
     val preferRomaji: Boolean? = null,
+    // Offer a file's plain lyrics even when LRCLIB has that version synced.
+    val keepFileLyrics: Boolean = false,
+    // Songs (track ids) where the file's lyrics were asked for from the lyrics, whatever keepFileLyrics says.
+    val fileLyricsSongs: Set<String> = emptySet(),
     // The scrobble account whose stats show on the stats page; a blank user is not connected.
     val scrobbleService: ScrobbleService = ScrobbleService.LASTFM,
-    val scrobbleUser: String = ""
+    val scrobbleUser: String = "",
+    // Off hides the scrobble side of Listening stats (and its switch) altogether.
+    val showScrobbles: Boolean = true
 )
 
 class SettingsManager(private val context: Context) {
@@ -74,8 +82,12 @@ class SettingsManager(private val context: Context) {
         val KEY_ONBOARDING_COMPLETE = booleanPreferencesKey("onboarding_complete")
         val KEY_ONLINE_LYRICS = booleanPreferencesKey("online_lyrics")
         val KEY_PREFER_ROMAJI = booleanPreferencesKey("prefer_romaji")
+        val KEY_KEEP_FILE_LYRICS = booleanPreferencesKey("keep_file_lyrics")
+        val KEY_QUEUE_SHOW_PLAYED = booleanPreferencesKey("queue_show_played")
+        val KEY_FILE_LYRICS_SONGS = stringSetPreferencesKey("file_lyrics_songs")
         val KEY_SCROBBLE_SERVICE = stringPreferencesKey("scrobble_service")
         val KEY_SCROBBLE_USER = stringPreferencesKey("scrobble_user")
+        val KEY_SHOW_SCROBBLES = booleanPreferencesKey("show_scrobbles")
     }
 
     val settingsFlow: Flow<PlayerSettings> = context.dataStore.data.map { prefs ->
@@ -105,9 +117,13 @@ class SettingsManager(private val context: Context) {
             onboardingComplete = prefs[KEY_ONBOARDING_COMPLETE] ?: false,
             onlineLyrics = prefs[KEY_ONLINE_LYRICS],
             preferRomaji = prefs[KEY_PREFER_ROMAJI],
+            keepFileLyrics = prefs[KEY_KEEP_FILE_LYRICS] ?: false,
+            queueShowPlayed = prefs[KEY_QUEUE_SHOW_PLAYED] ?: false,
+            fileLyricsSongs = prefs[KEY_FILE_LYRICS_SONGS] ?: emptySet(),
             scrobbleService = ScrobbleService.entries.firstOrNull { it.name == prefs[KEY_SCROBBLE_SERVICE] }
                 ?: ScrobbleService.LASTFM,
-            scrobbleUser = prefs[KEY_SCROBBLE_USER] ?: ""
+            scrobbleUser = prefs[KEY_SCROBBLE_USER] ?: "",
+            showScrobbles = prefs[KEY_SHOW_SCROBBLES] ?: true
         )
     }
 
@@ -194,6 +210,25 @@ class SettingsManager(private val context: Context) {
 
     suspend fun setPreferRomaji(enabled: Boolean) {
         context.dataStore.edit { it[KEY_PREFER_ROMAJI] = enabled }
+    }
+
+    suspend fun setShowScrobbles(enabled: Boolean) {
+        context.dataStore.edit { it[KEY_SHOW_SCROBBLES] = enabled }
+    }
+
+    suspend fun setQueueShowPlayed(enabled: Boolean) {
+        context.dataStore.edit { it[KEY_QUEUE_SHOW_PLAYED] = enabled }
+    }
+
+    suspend fun setKeepFileLyrics(enabled: Boolean) {
+        context.dataStore.edit { it[KEY_KEEP_FILE_LYRICS] = enabled }
+    }
+
+    suspend fun setFileLyricsForSong(trackId: String, keep: Boolean) {
+        context.dataStore.edit { prefs ->
+            val songs = prefs[KEY_FILE_LYRICS_SONGS] ?: emptySet()
+            prefs[KEY_FILE_LYRICS_SONGS] = if (keep) songs + trackId else songs - trackId
+        }
     }
 
     suspend fun setOnboardingComplete() {

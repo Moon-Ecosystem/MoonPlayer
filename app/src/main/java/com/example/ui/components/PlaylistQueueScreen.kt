@@ -130,7 +130,9 @@ fun PlaylistQueueScreen(
     var searching by remember { mutableStateOf(false) }
     val searchState = rememberTextFieldState()
     val search = searchState.text.toString()
-    var showPlayed by remember { mutableStateOf(false) }
+    // Folded unless the setting says to list played songs too; tapping Played still folds it.
+    val showPlayedSetting = viewModel.settings.collectAsState().value.queueShowPlayed
+    var showPlayed by remember(showPlayedSetting) { mutableStateOf(showPlayedSetting) }
     val searchFocus = remember { FocusRequester() }
     fun closeSearch() {
         searchState.clearText()

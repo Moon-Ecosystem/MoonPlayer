@@ -102,9 +102,10 @@ fun StatsScreen(
     val range by viewModel.statsRange.collectAsState()
     val allTracks by viewModel.allTracks.collectAsState()
     val favoriteIds by viewModel.favoriteTrackIds.collectAsState()
-    val online by viewModel.statsOnline.collectAsState()
-    val scrobbles by viewModel.scrobbleState.collectAsState()
     val settings by viewModel.settings.collectAsState()
+    // With scrobbles hidden in Settings the page is this phone's stats only, whatever was picked last.
+    val online = viewModel.statsOnline.collectAsState().value && settings.showScrobbles
+    val scrobbles by viewModel.scrobbleState.collectAsState()
     val connected = settings.scrobbleUser.isNotBlank()
     val accent = LocalAccentColor.current
     var showResetDialog by remember { mutableStateOf(false) }
@@ -198,11 +199,13 @@ fun StatsScreen(
             )
         }
 
-        StatsSourceSwitch(
-            labels = listOf("ON THIS PHONE", if (connected) settings.scrobbleService.label.uppercase() else "SCROBBLES"),
-            selected = if (online) 1 else 0,
-            onSelect = { viewModel.setStatsOnline(it == 1) }
-        )
+        if (settings.showScrobbles) {
+            StatsSourceSwitch(
+                labels = listOf("ON THIS PHONE", if (connected) settings.scrobbleService.label.uppercase() else "SCROBBLES"),
+                selected = if (online) 1 else 0,
+                onSelect = { viewModel.setStatsOnline(it == 1) }
+            )
+        }
 
         if (online) {
             ScrobbleStatsContent(scrobbles, settings.scrobbleService, settings.scrobbleUser, range, accent, viewModel)

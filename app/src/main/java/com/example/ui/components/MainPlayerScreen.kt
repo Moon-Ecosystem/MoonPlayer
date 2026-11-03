@@ -95,6 +95,8 @@ import androidx.compose.ui.unit.sp
 import androidx.media3.common.Player
 import coil.compose.AsyncImage
 import com.example.data.artModel
+import com.example.data.lyrics.FileLyricsToggle
+import com.example.data.lyrics.LyricsLookup
 import com.example.data.repository.audioFormatLabel
 import com.example.R
 import com.example.data.model.Track
@@ -134,6 +136,7 @@ fun MainPlayerScreen(
     val favoriteIds by viewModel.favoriteTrackIds.collectAsState()
     val settings by viewModel.settings.collectAsState()
     val lyricsOpen by viewModel.lyricsOpen.collectAsState()
+    val lyricsState by viewModel.lyricsState.collectAsState()
     val fileMissing by viewModel.currentFileMissing.collectAsState()
 
     val accent = LocalAccentColor.current
@@ -269,6 +272,17 @@ fun MainPlayerScreen(
                                 showOverflowMenu = false
                                 showSongInfo = true
                             }
+                        }
+                        // Only while lyrics are open, and only when LRCLIB's synced lyrics hide the
+                        // file's own; flips in place like A-B, so the menu stays open.
+                        val fileToggle = (lyricsState as? MainViewModel.LyricsUiState.Done)
+                            ?.lookup?.let { it as? LyricsLookup.Found }?.fileToggle
+                        if (lyricsOpen && fileToggle != null) {
+                            PlayerMenuItem(
+                                label = "File's lyrics",
+                                status = if (fileToggle == FileLyricsToggle.SHOW) "Hidden" else "Shown",
+                                active = fileToggle == FileLyricsToggle.HIDE
+                            ) { viewModel.setFileLyricsForSong(fileToggle == FileLyricsToggle.SHOW) }
                         }
                         PlayerMenuItem(
                             label = "Equalizer",

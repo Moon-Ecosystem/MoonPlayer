@@ -47,6 +47,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.BorderStroke
@@ -54,13 +55,20 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Surface
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material3.Icon
 import com.example.data.lyrics.LyricLine
 import com.example.data.lyrics.Lyrics
 import com.example.data.lyrics.LyricsKind
 import com.example.data.lyrics.LyricsLookup
 import com.example.data.lyrics.LyricsSource
+import com.example.data.lyrics.LyricsVersion
 import com.example.data.lyrics.currentLineIndex
 import com.example.ui.theme.LocalAccentColor
 import com.example.ui.theme.MutedText
@@ -100,22 +108,28 @@ fun LyricsPanel(viewModel: MainViewModel, modifier: Modifier = Modifier) {
             LyricsUiState.AskOnline -> AskOnline(viewModel, Modifier.align(Alignment.Center))
             is LyricsUiState.Done -> when (val lookup = s.lookup) {
                 is LyricsLookup.Found -> {
+                    // Every version, the file's (♫) first, when there's more than one (or only a
+                    // translation, so it's never mistaken for the real words). Showing the file's
+                    // lyrics that LRCLIB's hide is in the player's ⋮ menu.
+                    val shown = lookup.shown
+                    val showSwitch = shown != null && (lookup.available.size > 1 || shown.kind == LyricsKind.TRANSLATION)
+                    // Room for the pills only when they're there.
+                    val top = if (showSwitch) 42.dp else 14.dp
                     when (val lyrics = lookup.lyrics) {
                         // Keyed by version, so switching starts the new one at the sung line.
-                        is Lyrics.Synced -> androidx.compose.runtime.key(lookup.kind) {
-                            SyncedLyrics(viewModel, lyrics.lines, lookup.source)
+                        is Lyrics.Synced -> androidx.compose.runtime.key(lookup.shown) {
+                            SyncedLyrics(viewModel, lyrics.lines, lookup.source, top)
                         }
-                        is Lyrics.Plain -> PlainLyrics(lyrics.text, lookup.source)
+                        is Lyrics.Plain -> androidx.compose.runtime.key(lookup.shown) {
+                            PlainLyrics(lyrics.text, lookup.source, top)
+                        }
                     }
-                    // Original / Romaji / Translation, when the song has more than one kind (or
-                    // only a translation, so it's never mistaken for the real words).
-                    val kind = lookup.kind
-                    if (kind != null && (lookup.available.size > 1 || kind == LyricsKind.TRANSLATION)) {
-                        LyricsKindSwitch(
+                    if (showSwitch && shown != null) {
+                        LyricsVersionSwitch(
                             available = lookup.available,
-                            shown = kind,
-                            onPick = { viewModel.showLyricsKind(it) },
-                            modifier = Modifier.align(Alignment.TopStart).padding(start = 12.dp, top = 10.dp)
+                            shown = shown,
+                            onPick = { viewModel.showLyricsVersion(it) },
+                            modifier = Modifier.align(Alignment.TopStart).padding(top = 4.dp)
                         )
                     }
                 }
@@ -161,7 +175,7 @@ private class LyricsScrollGuard : NestedScrollConnection {
 
 @OptIn(ExperimentalFoundationApi::class) // combinedClickable, for long press to copy a line
 @Composable
-private fun SyncedLyrics(viewModel: MainViewModel, lines: List<LyricLine>, source: LyricsSource) {
+private fun SyncedLyrics(viewModel: MainViewModel, lines: List<LyricLine>, source: LyricsSource, top: Dp) {
     val position = viewModel.currentPositionMs.collectAsState()
     val copy = rememberCopy()
     // Changes only when the sung line changes, not on every position tick.
@@ -179,8 +193,8 @@ private fun SyncedLyrics(viewModel: MainViewModel, lines: List<LyricLine>, sourc
 
     LazyColumn(
         state = listState,
-        // Top padding leaves room for the Original / Romaji / Translation pills.
-        contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 48.dp, bottom = 200.dp),
+        // [top] leaves room for the version pills when they show.
+        contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = top, bottom = 200.dp),
         modifier = Modifier.fillMaxSize().nestedScroll(guard)
     ) {
         itemsIndexed(lines) { index, line ->
@@ -217,14 +231,14 @@ private fun SyncedLyrics(viewModel: MainViewModel, lines: List<LyricLine>, sourc
 }
 
 @Composable
-private fun PlainLyrics(text: String, source: LyricsSource) {
+private fun PlainLyrics(text: String, source: LyricsSource, top: Dp) {
     val guard = remember { LyricsScrollGuard() }
     Column(
         modifier = Modifier
             .fillMaxSize()
             .nestedScroll(guard)
             .verticalScroll(rememberScrollState())
-            .padding(start = 18.dp, end = 18.dp, top = 48.dp, bottom = 16.dp)
+            .padding(start = 18.dp, end = 18.dp, top = top, bottom = 16.dp)
     ) {
         // Long press selects words to copy, as in any text.
         SelectionContainer {
@@ -268,31 +282,50 @@ private fun AskOnline(viewModel: MainViewModel, modifier: Modifier) {
     }
 }
 
-/** Small pills to switch between the versions a song has; the shown one is filled. */
+/**
+ * Small pills to switch between the versions a song has; the shown one is filled. A ♫ marks the
+ * ones stored in the song file. The row scrolls sideways when it's wider than the square.
+ */
 @Composable
-private fun LyricsKindSwitch(
-    available: Set<LyricsKind>,
-    shown: LyricsKind,
-    onPick: (LyricsKind) -> Unit,
+private fun LyricsVersionSwitch(
+    available: List<LyricsVersion>,
+    shown: LyricsVersion,
+    onPick: (LyricsVersion) -> Unit,
     modifier: Modifier
 ) {
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = modifier) {
-        LyricsKind.entries.filter { it in available }.forEach { kind ->
-            val selected = kind == shown
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = modifier
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 12.dp)
+    ) {
+        available.forEach { version ->
+            val selected = version == shown
+            val inFile = version.source == LyricsSource.EMBEDDED
+            val color = if (selected) Color.Black else PrimaryText
             Surface(
-                onClick = { onPick(kind) },
+                onClick = { onPick(version) },
                 shape = CircleShape,
                 color = if (selected) PrimaryText else Color.Black.copy(alpha = 0.25f),
                 border = if (selected) null else BorderStroke(1.dp, PrimaryText.copy(alpha = 0.35f)),
-                modifier = Modifier.semantics { this.selected = selected }
+                modifier = Modifier.semantics {
+                    this.selected = selected
+                    contentDescription = version.kind.label + if (inFile) ", from the song file" else ", from ${version.source.label}"
+                }
             ) {
-                Text(
-                    text = kind.label,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = if (selected) Color.Black else PrimaryText,
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                )
+                ) {
+                    if (inFile) Icon(Icons.Default.MusicNote, contentDescription = null, tint = color, modifier = Modifier.size(13.dp))
+                    Text(
+                        text = version.kind.label,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = color
+                    )
+                }
             }
         }
     }
