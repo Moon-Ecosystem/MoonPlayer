@@ -15,7 +15,8 @@ import androidx.media3.common.Player
 import com.example.data.db.PlaylistEntity
 import com.example.data.db.PlaylistTrackEntity
 import com.example.data.lyrics.LyricsLookup
-import com.example.data.lyrics.LyricsVersion
+import com.example.data.lyrics.LyricsKind
+import com.example.data.lyrics.LyricsSource
 import com.example.data.lyrics.prefersLatinLyrics
 import com.example.data.lyrics.LyricsRepository
 import com.example.data.model.Track
@@ -572,13 +573,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** Shows another version (the file's or LRCLIB's original / romaji / translation) and remembers it for the song. */
-    fun showLyricsVersion(version: LyricsVersion) {
+    /** Shows another kind (original / romaji / translation) and remembers it for the song. */
+    fun showLyricsKind(kind: LyricsKind) {
         val track = _currentTrack.value ?: return
         viewModelScope.launch {
-            lyricsRepository.choose(track.id, version)
+            lyricsRepository.chooseKind(track.id, kind)
             loadLyrics(showSpinner = false)
         }
+    }
+
+    /** The source sheet: [source] for this song's [kind], or null to go back to automatic. */
+    fun pickLyricsSource(kind: LyricsKind, source: LyricsSource?) {
+        val track = _currentTrack.value ?: return
+        viewModelScope.launch {
+            lyricsRepository.chooseSource(track.id, kind, source)
+            loadLyrics(showSpinner = false)
+        }
+    }
+
+    /** Settings › Lyrics: moves [source] one place up ([up]) or down in the order. */
+    fun moveLyricsSource(source: LyricsSource, up: Boolean) {
+        val order = settings.value.lyricsSourceOrder.toMutableList()
+        val i = order.indexOf(source)
+        val j = if (up) i - 1 else i + 1
+        if (i < 0 || j !in order.indices) return
+        order.add(j, order.removeAt(i))
+        viewModelScope.launch { settingsManager.setLyricsSourceOrder(order) }
+    }
+
+    fun setLyricsSourceChip(enabled: Boolean) {
+        viewModelScope.launch { settingsManager.setLyricsSourceChip(enabled) }
+    }
+
+    fun setPreferSyncedLyrics(enabled: Boolean) {
+        viewModelScope.launch { settingsManager.setPreferSyncedLyrics(enabled) }
     }
 
     fun setPreferRomaji(enabled: Boolean) {
@@ -595,24 +623,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { settingsManager.setQueueShowPlayed(enabled) }
     }
 
-    fun setKeepFileLyrics(enabled: Boolean) {
-        viewModelScope.launch { settingsManager.setKeepFileLyrics(enabled) }
-    }
-
-    /** Shows (or hides again) the file's own lyrics beside LRCLIB's for the current song only. */
-    fun setFileLyricsForSong(keep: Boolean) {
-        val track = _currentTrack.value ?: return
-        viewModelScope.launch {
-            settingsManager.setFileLyricsForSong(track.id, keep)
-            loadLyrics(showSpinner = false)
-        }
-    }
-
     /** The romaji preference in effect: the user's setting, else the phone's language. */
     fun effectivePreferRomaji(settings: PlayerSettings): Boolean =
         settings.preferRomaji ?: prefersLatinLyrics(java.util.Locale.getDefault().language)
 
-    private fun loadLyrics(online: Boolean? = null, showSpinner: Boolean = true) {
+    /**
+     * The source sheet's "Look up on LRCLIB": asks LRCLIB for this song although its own lyrics
+     * made the automatic lookup skip it, online setting or not. Only this song, only this once.
+     */
+    fun lookUpLrclib() = loadLyrics(showSpinner = false, forceLrclib = true)
+
+    private fun loadLyrics(online: Boolean? = null, showSpinner: Boolean = true, forceLrclib: Boolean = false) {
         val track = _currentTrack.value ?: return
         lyricsJob?.cancel()
         lyricsJob = viewModelScope.launch {
@@ -623,8 +644,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 track,
                 online = allowed == true,
                 preferRomaji = effectivePreferRomaji(saved),
-                keepFileLyrics = saved.keepFileLyrics,
-                keepFileLyricsForSong = track.id in saved.fileLyricsSongs
+                order = saved.lyricsSourceOrder,
+                preferSynced = saved.preferSyncedLyrics,
+                forceLrclib = forceLrclib
             )
             _lyricsState.value = if (allowed == null && lookup !is LyricsLookup.Found) {
                 LyricsUiState.AskOnline
@@ -1244,8 +1266,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     track,
                     onlineLyrics = s.onlineLyrics,
                     preferRomaji = effectivePreferRomaji(s),
-                    keepFileLyrics = s.keepFileLyrics,
-                    keepFileLyricsForSong = track.id in s.fileLyricsSongs
+                    order = s.lyricsSourceOrder,
+                    preferSynced = s.preferSyncedLyrics
                 )
             )
         )

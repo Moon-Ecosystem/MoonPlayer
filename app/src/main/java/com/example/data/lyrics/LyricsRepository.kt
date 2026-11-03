@@ -22,21 +22,33 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 
-/** Where a song's lyrics came from, shown under the lyrics. */
-enum class LyricsSource(val label: String) { LRC_FILE("Local .lrc file"), EMBEDDED("In the file"), LRCLIB("LRCLIB") }
+/** Where a song's lyrics come from: [label] for the source line, [long] for the sheet and Song info. */
+enum class LyricsSource(val label: String, val long: String) {
+    LRC_FILE(".lrc file", "The .lrc file beside the song"),
+    EMBEDDED("In the song file", "Stored in the song file"),
+    LRCLIB("LRCLIB", "LRCLIB, online")
+}
+
+/** One source that has the shown kind, for the source sheet. */
+data class LyricsSourceOption(val source: LyricsSource, val synced: Boolean)
 
 sealed interface LyricsLookup {
     /**
-     * [shown] is the version on screen (null for a local .lrc); [available] lists every version
-     * offered, the file's first within a kind, for the switch. [fileToggle] is set when this song
-     * can show (or hide again) file versions that LRCLIB's synced ones hide.
+     * [kind] is the version on screen and [kinds] every kind the song has (the pills). [sources]
+     * lists every source that has [kind], in the user's order; [source] is the one shown, the
+     * automatic pick [autoSource] unless [picked] by hand. [lrclibAsked]: LRCLIB has answered for
+     * this song (saved); [lrclibFailed]: a lookup asked for from the source sheet failed.
      */
     data class Found(
         val lyrics: Lyrics,
         val source: LyricsSource,
-        val shown: LyricsVersion? = null,
-        val available: List<LyricsVersion> = emptyList(),
-        val fileToggle: FileLyricsToggle? = null
+        val kind: LyricsKind,
+        val kinds: List<LyricsKind>,
+        val sources: List<LyricsSourceOption>,
+        val autoSource: LyricsSource,
+        val picked: Boolean,
+        val lrclibAsked: Boolean,
+        val lrclibFailed: Boolean = false
     ) : LyricsLookup
     data object NotFound : LyricsLookup
     /**
@@ -46,44 +58,48 @@ sealed interface LyricsLookup {
     data class Unavailable(val busy: Boolean) : LyricsLookup
 }
 
-/** What the per-song pill at the end of the lyrics switch does. */
-enum class FileLyricsToggle { SHOW, HIDE }
-
 /** LRCLIB answered "busy" (503/429) even after a retry. */
 private class LrclibBusyException : IOException("LRCLIB is busy")
 
 /**
- * Finds lyrics for a track: a same-named .lrc beside the file wins outright. Otherwise the
- * versions in the file's own tags and LRCLIB's (a saved earlier result, or a lookup when
- * [online] and the file has no synced lyrics) are offered together, the file's first. Online
- * results, including "none", are saved so each song is looked up once.
+ * Finds a song's lyrics in up to three places: a same-named .lrc beside it, the song file's own
+ * tags, and LRCLIB (a saved earlier answer, or a lookup when [online] and no source ranked above
+ * LRCLIB has synced lyrics, or when the user asks). For each kind one
+ * source is shown: the one picked for the song, else synced-first (if preferred) then the user's
+ * order. Online results, including "none", are saved so each song is looked up once.
  */
 class LyricsRepository(private val context: Context, private val dao: LyricsDao) {
 
     /**
-     * [preferRomaji]: show romaji over the original script when the song has both.
-     * [keepFileLyrics] (for every song) or [keepFileLyricsForSong]: offer the file's plain
-     * versions even where LRCLIB has them synced.
+     * [preferRomaji]: open on romaji when the song has it. [order] and [preferSynced] are the
+     * Settings › Lyrics source preferences. [forceLrclib]: ask LRCLIB now whatever the rules say
+     * (the sheet's "Look up on LRCLIB"), online setting or not.
      */
     suspend fun find(
         track: Track,
         online: Boolean,
         preferRomaji: Boolean,
-        keepFileLyrics: Boolean = false,
-        keepFileLyricsForSong: Boolean = false
+        order: List<LyricsSource> = DEFAULT_LYRICS_SOURCE_ORDER,
+        preferSynced: Boolean = true,
+        forceLrclib: Boolean = false
     ): LyricsLookup = withContext(Dispatchers.IO) {
-        readSiblingLrc(track)?.let { text ->
-            lyricsFromText(text)?.let { return@withContext LyricsLookup.Found(it, LyricsSource.LRC_FILE) }
+        // kind -> source -> lyrics
+        val byKind = sortedMapOf<LyricsKind, MutableMap<LyricsSource, Lyrics>>()
+        fun add(kind: LyricsKind, source: LyricsSource, lyrics: Lyrics) { byKind.getOrPut(kind) { mutableMapOf() }[source] = lyrics }
+
+        readSiblingLrc(track)?.let(::lyricsFromText)?.let { lrc ->
+            add(lyricsKinds(listOf(plainText(lrc)), track.title).first(), LyricsSource.LRC_FILE, lrc)
         }
-        val versions = LinkedHashMap<LyricsVersion, Lyrics>()
-        embeddedVersions(track).forEach { (kind, lyrics) -> versions[LyricsVersion(kind, LyricsSource.EMBEDDED)] = lyrics }
+        embeddedVersions(track).forEach { (kind, lyrics) -> add(kind, LyricsSource.EMBEDDED, lyrics) }
 
         val row = dao.get(track.id)
         var unavailable: LyricsLookup.Unavailable? = null
-        // A row that only holds a version choice isn't an LRCLIB answer. Synced lyrics in the file
-        // already follow the song, so LRCLIB is only asked when the file has none.
-        val fileSynced = versions.values.any { it is Lyrics.Synced }
-        val lrclib = row?.takeIf { it.source == LyricsSource.LRCLIB.name } ?: if (online && !fileSynced) {
+        // A row that only holds a choice isn't an LRCLIB answer. Synced lyrics from a source the
+        // user ranks above LRCLIB already follow the song, so LRCLIB isn't asked then.
+        val syncedSources = byKind.values.flatMap { m -> m.filterValues { it is Lyrics.Synced }.keys }.toSet()
+        val wantLrclib = online && shouldAskLrclib(syncedSources, order)
+        val savedLrclib = row?.takeIf { it.source == LyricsSource.LRCLIB.name }
+        val lrclib = savedLrclib ?: if (forceLrclib || wantLrclib) {
             try {
                 val fetched = fetchFromLrclib(track)
                 LyricsEntity(
@@ -103,18 +119,32 @@ class LyricsRepository(private val context: Context, private val dao: LyricsDao)
                 null
             }
         } else null
-        lrclib?.let { saved -> lrclibVersions(saved).forEach { (kind, lyrics) -> versions[LyricsVersion(kind, LyricsSource.LRCLIB)] = lyrics } }
+        lrclib?.let { saved -> lrclibVersions(saved).forEach { (kind, lyrics) -> add(kind, LyricsSource.LRCLIB, lyrics) } }
 
-        val offered = withoutShadowedPlain(versions, keepAll = keepFileLyrics || keepFileLyricsForSong)
-        // Only the per-song choice can be undone from the lyrics; the setting is changed in Settings.
-        val fileToggle = when {
-            keepFileLyrics -> null
-            keepFileLyricsForSong -> FileLyricsToggle.HIDE.takeIf { withoutShadowedPlain(versions).size < versions.size }
-            else -> FileLyricsToggle.SHOW.takeIf { offered.size < versions.size }
-        }
-        val shown = chooseVersion(offered.keys.toList(), parseChoice(row?.chosenKind), preferRomaji)
+        val choice = parseChoice(row?.chosenKind)
+        val kind = chooseLyricsKind(byKind.keys, choice.kind, preferRomaji)
             ?: return@withContext unavailable ?: LyricsLookup.NotFound
-        LyricsLookup.Found(offered.getValue(shown), shown.source, shown, offered.keys.toList(), fileToggle)
+        val candidates = byKind.getValue(kind)
+        val auto = autoSource(candidates, order, preferSynced)!!
+        val picked = choice.sources[kind]?.takeIf { it in candidates }
+        val source = picked ?: auto
+        fun rank(s: LyricsSource) = order.indexOf(s).takeIf { it >= 0 } ?: (order.size + s.ordinal)
+        LyricsLookup.Found(
+            lyrics = candidates.getValue(source),
+            source = source,
+            kind = kind,
+            kinds = byKind.keys.toList(),
+            sources = candidates.entries.sortedBy { rank(it.key) }.map { LyricsSourceOption(it.key, it.value is Lyrics.Synced) },
+            autoSource = auto,
+            picked = picked != null,
+            lrclibAsked = lrclib != null,
+            lrclibFailed = forceLrclib && unavailable != null
+        )
+    }
+
+    private fun plainText(l: Lyrics) = when (l) {
+        is Lyrics.Synced -> l.lines.joinToString("\n") { it.text }
+        is Lyrics.Plain -> l.text
     }
 
     /**
@@ -125,42 +155,43 @@ class LyricsRepository(private val context: Context, private val dao: LyricsDao)
         track: Track,
         onlineLyrics: Boolean?,
         preferRomaji: Boolean,
-        keepFileLyrics: Boolean,
-        keepFileLyricsForSong: Boolean
+        order: List<LyricsSource>,
+        preferSynced: Boolean
     ): List<Pair<String, String>> = withContext(Dispatchers.IO) {
         fun sync(l: Lyrics) = if (l is Lyrics.Synced) "synced" else "not synced"
-        val lookup = find(track, online = false, preferRomaji, keepFileLyrics, keepFileLyricsForSong) as? LyricsLookup.Found
-        val offered = lookup?.available.orEmpty()
+        val lookup = find(track, online = false, preferRomaji, order, preferSynced) as? LyricsLookup.Found
 
         val lrc = readSiblingLrc(track)?.let(::lyricsFromText)
         val embedded = embeddedVersions(track)
         val saved = dao.get(track.id)?.takeIf { it.source == LyricsSource.LRCLIB.name }
         listOf(
             ".lrc file" to (lrc?.let { "Yes, ${sync(it)}" } ?: "None"),
-            "In the file" to (
-                embedded.takeIf { it.isNotEmpty() }?.joinToString(", ") { (kind, l) ->
-                    val hidden = lrc == null && LyricsVersion(kind, LyricsSource.EMBEDDED) !in offered
-                    "${kind.label} (${sync(l)}${if (hidden) ", hidden by LRCLIB's synced" else ""})"
-                } ?: "None"
-            ),
+            "In the file" to (embedded.takeIf { it.isNotEmpty() }?.joinToString(", ") { (kind, l) -> "${kind.label} (${sync(l)})" } ?: "None"),
             "LRCLIB" to when {
                 saved != null -> lrclibVersions(saved).takeIf { it.isNotEmpty() }
                     ?.entries?.joinToString(", ") { (kind, l) -> "${kind.label} (${sync(l)})" } ?: "Has none"
                 onlineLyrics != true -> "Not looked up · online lyrics off"
                 else -> "Not looked up yet"
             },
-            "In use" to when {
-                lookup == null -> "None"
-                lookup.shown == null -> "${lookup.source.label}, ${sync(lookup.lyrics)}"
-                else -> "${lookup.shown.kind.label} from ${if (lookup.source == LyricsSource.EMBEDDED) "the file" else lookup.source.label}, ${sync(lookup.lyrics)}"
-            }
+            "In use" to (lookup?.let {
+                "${it.kind.label} from ${it.source.label}, ${sync(it.lyrics)} · ${if (it.picked) "picked for this song" else "automatic"}"
+            } ?: "None")
         )
     }
 
-    /** Remembers which version to show for this song, even before (or without) an LRCLIB lookup. */
-    suspend fun choose(trackId: String, version: LyricsVersion) = withContext(Dispatchers.IO) {
-        val choice = encodeChoice(version)
-        if (dao.get(trackId) != null) {
+    /** Remembers the kind this song opens on. */
+    suspend fun chooseKind(trackId: String, kind: LyricsKind) = updateChoice(trackId) { it.copy(kind = kind) }
+
+    /** Remembers [source] for this song's [kind]; null goes back to the automatic pick. */
+    suspend fun chooseSource(trackId: String, kind: LyricsKind, source: LyricsSource?) = updateChoice(trackId) {
+        it.copy(sources = if (source == null) it.sources - kind else it.sources + (kind to source))
+    }
+
+    /** Saves a changed choice, even before (or without) an LRCLIB lookup. */
+    private suspend fun updateChoice(trackId: String, change: (LyricsChoice) -> LyricsChoice) = withContext(Dispatchers.IO) {
+        val row = dao.get(trackId)
+        val choice = encodeChoice(change(parseChoice(row?.chosenKind)))
+        if (row != null) {
             dao.setChosenKind(trackId, choice)
         } else {
             dao.put(LyricsEntity(trackId, null, null, null, null, choice, source = CHOICE_ONLY, fetchedAt = 0))

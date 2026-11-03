@@ -25,6 +25,8 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -266,6 +268,36 @@ fun SettingsScreen(
         }
 
         if (shows(SettingsSection.LYRICS)) {
+        SettingsSectionHeader(title = "WHERE LYRICS COME FROM")
+        Spacer(modifier = Modifier.height(8.dp))
+        LyricsSourceOrder(settings.lyricsSourceOrder, accent) { source, up -> viewModel.moveLyricsSource(source, up) }
+        Text(
+            text = "Tried in this order for each version (original, romaji, translation). Pick another source for one song by tapping the source line under its lyrics.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MutedText,
+            modifier = Modifier.padding(top = 6.dp, bottom = 12.dp)
+        )
+
+        SettingsToggleRow(
+            title = "Prefer Synced Lyrics",
+            subtitle = "A synced version wins over the order above. Off: the order wins even when its lyrics aren't synced",
+            checked = settings.preferSyncedLyrics,
+            onCheckedChange = { viewModel.setPreferSyncedLyrics(it) },
+            accentColor = accent
+        )
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        SettingsToggleRow(
+            title = "Show Source Over Lyrics",
+            subtitle = "When a song has lyrics from more than one source, show where they come from for a few seconds when lyrics open or scroll. Off: only at the end of the lyrics",
+            checked = settings.lyricsSourceChip,
+            onCheckedChange = { viewModel.setLyricsSourceChip(it) },
+            accentColor = accent
+        )
+
+        Spacer(modifier = Modifier.height(4.dp))
+
         SettingsToggleRow(
             title = "Online Lyrics",
             subtitle = "Look up lyrics on LRCLIB. Sends only the song's title, artist, album and length; results are saved on the phone",
@@ -281,16 +313,6 @@ fun SettingsScreen(
             subtitle = "For Japanese and other non-Latin songs, show romaji when it's available. Each song can still be switched in its lyrics",
             checked = viewModel.effectivePreferRomaji(settings),
             onCheckedChange = { viewModel.setPreferRomaji(it) },
-            accentColor = accent
-        )
-
-        Spacer(modifier = Modifier.height(4.dp))
-
-        SettingsToggleRow(
-            title = "Keep the File's Own Lyrics",
-            subtitle = "Also offer the unsynced lyrics stored in the song file (marked ♫) when LRCLIB has synced ones of the same kind. Off: one song at a time from the player's ⋮ menu",
-            checked = settings.keepFileLyrics,
-            onCheckedChange = { viewModel.setKeepFileLyrics(it) },
             accentColor = accent
         )
         }
@@ -439,6 +461,43 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(24.dp))
         }
+        }
+    }
+}
+
+/** The lyrics sources in the user's order, each with buttons to move it up or down. */
+@Composable
+private fun LyricsSourceOrder(
+    order: List<com.example.data.lyrics.LyricsSource>,
+    accent: Color,
+    onMove: (com.example.data.lyrics.LyricsSource, Boolean) -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = TerminalRaisedPanel,
+        border = androidx.compose.foundation.BorderStroke(1.dp, TerminalBorder),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column {
+            order.forEachIndexed { i, source ->
+                if (i > 0) HorizontalDivider(color = TerminalBorder)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(start = 14.dp, end = 4.dp, top = 4.dp, bottom = 4.dp)
+                ) {
+                    Text("${i + 1}", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, color = accent, modifier = Modifier.width(22.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(source.label, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = PrimaryText)
+                        Text(source.long, style = MaterialTheme.typography.bodySmall, color = MutedText)
+                    }
+                    IconButton(onClick = { onMove(source, true) }, enabled = i > 0) {
+                        Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Move ${source.label} up", tint = if (i > 0) PrimaryText else TerminalBorder)
+                    }
+                    IconButton(onClick = { onMove(source, false) }, enabled = i < order.lastIndex) {
+                        Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Move ${source.label} down", tint = if (i < order.lastIndex) PrimaryText else TerminalBorder)
+                    }
+                }
+            }
         }
     }
 }

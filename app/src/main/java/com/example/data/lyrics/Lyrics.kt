@@ -156,8 +156,6 @@ private val HEADING = Regex("""^\[[^\]]*(歌詞|Lyrics|Romaniz|Translation)[^\]]
 fun withoutHeading(text: String): String =
     if (lyricsHeading(text) == null) text else text.trimStart().substringAfter('\n', "").trimStart('\n')
 
-/** One version the lyrics switch can show: what it is and where it came from. */
-data class LyricsVersion(val kind: LyricsKind, val source: LyricsSource)
 
 /**
  * A file's lyrics tags as one version per kind, in kind order. Plain text loses its Genius
@@ -183,38 +181,64 @@ fun sortEmbedded(tags: List<EmbeddedLyrics>, title: String): List<Pair<LyricsKin
 }
 
 /**
- * The versions worth offering, by kind (the file's first within one). Unless [keepAll], a plain
- * one from the file is dropped when LRCLIB has that kind synced, so the switch doesn't show two
- * "Original"s where one is simply better.
+ * The order sources are tried in until the user changes it in Settings › Lyrics. It keeps 0.1's
+ * behaviour (a .lrc, else LRCLIB); lyrics stored in the song file, new since, come after.
  */
-fun withoutShadowedPlain(versions: Map<LyricsVersion, Lyrics>, keepAll: Boolean = false): Map<LyricsVersion, Lyrics> {
-    val syncedOnline = versions.filter { it.key.source == LyricsSource.LRCLIB && it.value is Lyrics.Synced }.keys.map { it.kind }.toSet()
-    return versions
-        .filterNot { (v, l) -> !keepAll && v.source == LyricsSource.EMBEDDED && l is Lyrics.Plain && v.kind in syncedOnline }
-        .toList()
-        .sortedWith(compareBy({ it.first.kind }, { it.first.source != LyricsSource.EMBEDDED }))
-        .toMap()
+val DEFAULT_LYRICS_SOURCE_ORDER = listOf(LyricsSource.LRC_FILE, LyricsSource.LRCLIB, LyricsSource.EMBEDDED)
+
+/**
+ * Whether LRCLIB is worth asking automatically: unless a source ranked above it in [order]
+ * already has synced lyrics. With the default order that's "no synced .lrc", as in 0.1.
+ */
+fun shouldAskLrclib(syncedSources: Set<LyricsSource>, order: List<LyricsSource>): Boolean {
+    val above = order.takeWhile { it != LyricsSource.LRCLIB }
+    return above.none { it in syncedSources }
 }
 
 /**
- * Which version to show: the one picked for this song, else the kind [chooseLyricsKind] picks
- * (a picked kind still counts if its source went away), from the file when it has that kind.
+ * The automatic pick among one kind's [candidates]: a synced one first when [preferSynced], then
+ * the user's source [order]. Null when there are none.
  */
-fun chooseVersion(available: List<LyricsVersion>, chosen: LyricsVersion?, preferRomaji: Boolean): LyricsVersion? {
-    chosen?.takeIf { it in available }?.let { return it }
-    val kind = chooseLyricsKind(available.map { it.kind }.toSet(), chosen?.kind, preferRomaji) ?: return null
-    return available.first { it.kind == kind }
+fun autoSource(candidates: Map<LyricsSource, Lyrics>, order: List<LyricsSource>, preferSynced: Boolean): LyricsSource? {
+    fun rank(s: LyricsSource) = order.indexOf(s).takeIf { it >= 0 } ?: (order.size + s.ordinal)
+    return candidates.keys.minWithOrNull(
+        compareBy<LyricsSource>({ if (preferSynced && candidates[it] !is Lyrics.Synced) 1 else 0 }, { rank(it) })
+    )
 }
 
-/** Saved as the kind alone for LRCLIB (what older versions wrote), "EMBEDDED:KIND" for the file. */
-fun encodeChoice(version: LyricsVersion): String =
-    if (version.source == LyricsSource.LRCLIB) version.kind.name else "${version.source.name}:${version.kind.name}"
+/** What a song remembers: the kind it opens on, and a source picked by hand per kind. */
+data class LyricsChoice(val kind: LyricsKind? = null, val sources: Map<LyricsKind, LyricsSource> = emptyMap())
 
-fun parseChoice(saved: String?): LyricsVersion? {
-    saved ?: return null
-    val source = if (':' in saved) runCatching { LyricsSource.valueOf(saved.substringBefore(':')) }.getOrNull() else LyricsSource.LRCLIB
-    val kind = runCatching { LyricsKind.valueOf(saved.substringAfter(':')) }.getOrNull()
-    return if (source != null && kind != null) LyricsVersion(kind, source) else null
+/** "ROMAJI|ORIGINAL=LRC_FILE|ROMAJI=LRCLIB": the kind, then each hand-picked source. */
+fun encodeChoice(c: LyricsChoice): String =
+    (listOf(c.kind?.name.orEmpty()) + c.sources.map { (k, s) -> "${k.name}=${s.name}" }).joinToString("|")
+
+/** Also reads what 0.2 saved: "ROMAJI" (an LRCLIB version) or "EMBEDDED:ROMAJI". */
+fun parseChoice(saved: String?): LyricsChoice {
+    if (saved.isNullOrBlank()) return LyricsChoice()
+    fun kindOf(s: String) = runCatching { LyricsKind.valueOf(s) }.getOrNull()
+    fun sourceOf(s: String) = runCatching { LyricsSource.valueOf(s) }.getOrNull()
+    val parts = saved.split('|')
+    val head = parts.first()
+    val sources = mutableMapOf<LyricsKind, LyricsSource>()
+    val kind = if (':' in head) {
+        val k = kindOf(head.substringAfter(':'))
+        val s = sourceOf(head.substringBefore(':'))
+        if (k != null && s != null) sources[k] = s
+        k
+    } else kindOf(head)
+    parts.drop(1).forEach { p ->
+        val k = kindOf(p.substringBefore('='))
+        val s = sourceOf(p.substringAfter('='))
+        if (k != null && s != null) sources[k] = s
+    }
+    return LyricsChoice(kind, sources)
+}
+
+/** Saved as names, "LRC_FILE,EMBEDDED,LRCLIB"; missing or unknown names fall back to the default order. */
+fun parseSourceOrder(saved: String?): List<LyricsSource> {
+    val named = saved.orEmpty().split(',').mapNotNull { n -> LyricsSource.entries.firstOrNull { it.name == n.trim() } }.distinct()
+    return named + DEFAULT_LYRICS_SOURCE_ORDER.filter { it !in named }
 }
 
 /**

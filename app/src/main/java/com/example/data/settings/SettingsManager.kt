@@ -2,6 +2,9 @@ package com.example.data.settings
 
 import android.content.Context
 import com.example.data.scrobble.ScrobbleService
+import com.example.data.lyrics.DEFAULT_LYRICS_SOURCE_ORDER
+import com.example.data.lyrics.LyricsSource
+import com.example.data.lyrics.parseSourceOrder
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
@@ -51,10 +54,12 @@ data class PlayerSettings(
     val onlineLyrics: Boolean? = null,
     // null = follow the phone's language (romaji unless it reads the song's own script)
     val preferRomaji: Boolean? = null,
-    // Offer a file's plain lyrics even when LRCLIB has that version synced.
-    val keepFileLyrics: Boolean = false,
-    // Songs (track ids) where the file's lyrics were asked for from the lyrics, whatever keepFileLyrics says.
-    val fileLyricsSongs: Set<String> = emptySet(),
+    // Where lyrics come from, most wanted first; a song's own pick in the source sheet wins.
+    val lyricsSourceOrder: List<LyricsSource> = DEFAULT_LYRICS_SOURCE_ORDER,
+    // A synced version beats the order above; off, the order wins even for unsynced lyrics.
+    val preferSyncedLyrics: Boolean = true,
+    // The source line that fades in over the lyrics; the one at their end always stays.
+    val lyricsSourceChip: Boolean = true,
     // The scrobble account whose stats show on the stats page; a blank user is not connected.
     val scrobbleService: ScrobbleService = ScrobbleService.LASTFM,
     val scrobbleUser: String = "",
@@ -82,9 +87,10 @@ class SettingsManager(private val context: Context) {
         val KEY_ONBOARDING_COMPLETE = booleanPreferencesKey("onboarding_complete")
         val KEY_ONLINE_LYRICS = booleanPreferencesKey("online_lyrics")
         val KEY_PREFER_ROMAJI = booleanPreferencesKey("prefer_romaji")
-        val KEY_KEEP_FILE_LYRICS = booleanPreferencesKey("keep_file_lyrics")
+        val KEY_LYRICS_SOURCE_ORDER = stringPreferencesKey("lyrics_source_order")
+        val KEY_PREFER_SYNCED_LYRICS = booleanPreferencesKey("prefer_synced_lyrics")
+        val KEY_LYRICS_SOURCE_CHIP = booleanPreferencesKey("lyrics_source_chip")
         val KEY_QUEUE_SHOW_PLAYED = booleanPreferencesKey("queue_show_played")
-        val KEY_FILE_LYRICS_SONGS = stringSetPreferencesKey("file_lyrics_songs")
         val KEY_SCROBBLE_SERVICE = stringPreferencesKey("scrobble_service")
         val KEY_SCROBBLE_USER = stringPreferencesKey("scrobble_user")
         val KEY_SHOW_SCROBBLES = booleanPreferencesKey("show_scrobbles")
@@ -117,9 +123,10 @@ class SettingsManager(private val context: Context) {
             onboardingComplete = prefs[KEY_ONBOARDING_COMPLETE] ?: false,
             onlineLyrics = prefs[KEY_ONLINE_LYRICS],
             preferRomaji = prefs[KEY_PREFER_ROMAJI],
-            keepFileLyrics = prefs[KEY_KEEP_FILE_LYRICS] ?: false,
+            lyricsSourceOrder = parseSourceOrder(prefs[KEY_LYRICS_SOURCE_ORDER]),
+            preferSyncedLyrics = prefs[KEY_PREFER_SYNCED_LYRICS] ?: true,
+            lyricsSourceChip = prefs[KEY_LYRICS_SOURCE_CHIP] ?: true,
             queueShowPlayed = prefs[KEY_QUEUE_SHOW_PLAYED] ?: false,
-            fileLyricsSongs = prefs[KEY_FILE_LYRICS_SONGS] ?: emptySet(),
             scrobbleService = ScrobbleService.entries.firstOrNull { it.name == prefs[KEY_SCROBBLE_SERVICE] }
                 ?: ScrobbleService.LASTFM,
             scrobbleUser = prefs[KEY_SCROBBLE_USER] ?: "",
@@ -220,15 +227,16 @@ class SettingsManager(private val context: Context) {
         context.dataStore.edit { it[KEY_QUEUE_SHOW_PLAYED] = enabled }
     }
 
-    suspend fun setKeepFileLyrics(enabled: Boolean) {
-        context.dataStore.edit { it[KEY_KEEP_FILE_LYRICS] = enabled }
+    suspend fun setLyricsSourceOrder(order: List<LyricsSource>) {
+        context.dataStore.edit { it[KEY_LYRICS_SOURCE_ORDER] = order.joinToString(",") { s -> s.name } }
     }
 
-    suspend fun setFileLyricsForSong(trackId: String, keep: Boolean) {
-        context.dataStore.edit { prefs ->
-            val songs = prefs[KEY_FILE_LYRICS_SONGS] ?: emptySet()
-            prefs[KEY_FILE_LYRICS_SONGS] = if (keep) songs + trackId else songs - trackId
-        }
+    suspend fun setLyricsSourceChip(enabled: Boolean) {
+        context.dataStore.edit { it[KEY_LYRICS_SOURCE_CHIP] = enabled }
+    }
+
+    suspend fun setPreferSyncedLyrics(enabled: Boolean) {
+        context.dataStore.edit { it[KEY_PREFER_SYNCED_LYRICS] = enabled }
     }
 
     suspend fun setOnboardingComplete() {
