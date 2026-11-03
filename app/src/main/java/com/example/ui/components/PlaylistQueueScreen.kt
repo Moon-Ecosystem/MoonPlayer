@@ -26,6 +26,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import android.widget.Toast
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.activity.compose.BackHandler
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalContext
@@ -58,6 +63,12 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.foundation.text.input.TextFieldLineLimits
+import androidx.compose.foundation.text.input.clearText
+import androidx.compose.foundation.text.input.rememberTextFieldState
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
@@ -93,6 +104,7 @@ import com.example.ui.theme.TerminalRaisedPanel
 import com.example.ui.theme.TerminalSurfaceElevated
 import com.example.viewmodel.MainViewModel
 import com.example.viewmodel.Screen
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 
 /**
  * Playlist & Queue Screen matching Image 2 (PlaylistQueue_73a31d54.jpeg).
@@ -113,11 +125,29 @@ fun PlaylistQueueScreen(
     val playingFrom by viewModel.playingFrom.collectAsState()
     val accent = LocalAccentColor.current
 
-    // The list shows what's still to come; songs already played fold away behind a toggle.
+    // Played songs stay in the queue, folded into a "Played" section by default. Search opens
+    // from the Queue row only when asked, and filters the view, never the queue.
+    var searching by remember { mutableStateOf(false) }
+    val searchState = rememberTextFieldState()
+    val search = searchState.text.toString()
     var showPlayed by remember { mutableStateOf(false) }
-    val upcoming = remember(queue, currentIndex) { queue.drop(currentIndex + 1) }
-    val upcomingDurationMs = remember(upcoming) { upcoming.sumOf { it.durationMs } }
-    val playedCount = currentIndex.coerceAtLeast(0)
+    val searchFocus = remember { FocusRequester() }
+    fun closeSearch() {
+        searchState.clearText()
+        searching = false
+    }
+    BackHandler(enabled = searching) { closeSearch() }
+    // The pager keeps this page composed under the player, so leaving the queue has to drop the
+    // search and its keyboard itself.
+    val screen by viewModel.currentScreen.collectAsState()
+    val keyboard = LocalSoftwareKeyboardController.current
+    LaunchedEffect(screen) {
+        if (screen != Screen.QUEUE && searching) {
+            keyboard?.hide()
+            closeSearch()
+        }
+    }
+    val totalDurationMs = remember(queue) { queue.sumOf { it.durationMs } }
     val context = LocalContext.current
 
     Column(
@@ -167,31 +197,33 @@ fun PlaylistQueueScreen(
                 )
             }
 
-            IconButton(
-                onClick = { viewModel.navigateTo(Screen.LIBRARY) },
-                modifier = Modifier.minimumInteractiveComponentSize()
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Search,
-                    contentDescription = "Search Library",
-                    tint = PrimaryText
-                )
-            }
+            // Balances the back button so the title stays centred (queue search lives below).
+            Spacer(modifier = Modifier.width(48.dp))
         }
 
-        // Stable per-entry keys ("id#n" for the n-th copy of a song) so a row keeps its key while
-        // dragged; the local order moves instantly and each step is mirrored to the player.
-        var order by remember(queue) { mutableStateOf(keyedEntries(queue)) }
+        // Rows in the order songs will play: the queue's own order, or the shuffled order with
+        // shuffle on (shuffle never reorders the queue list). Each row keeps its queue index and
+        // a stable key ("id#n" for the n-th copy of a song) so it keeps its key while dragged.
+        val playOrder by viewModel.playOrder.collectAsState()
+        var rows by remember(queue, playOrder, isShuffle) {
+            val keyed = keyedEntries(queue)
+            val positions = if (isShuffle && playOrder.size == queue.size) playOrder else queue.indices.toList()
+            mutableStateOf(positions.map { IndexedValue(it, keyed[it]) })
+        }
         val haptic = LocalHapticFeedback.current
         val listState = rememberLazyListState()
+        // The local rows move instantly; each step goes to the player: a reorder of the play
+        // order with shuffle on, of the queue itself otherwise.
         val reorderState = rememberReorderableLazyListState(listState) { from, to ->
-            val fromIndex = order.indexOfFirst { it.first == from.key }
-            val toIndex = order.indexOfFirst { it.first == to.key }
-            if (fromIndex >= 0 && toIndex >= 0) {
-                order = order.toMutableList().apply { add(toIndex, removeAt(fromIndex)) }
-                viewModel.moveQueueItem(fromIndex, toIndex)
+            val fromPos = rows.indexOfFirst { it.value.first == from.key }
+            val toPos = rows.indexOfFirst { it.value.first == to.key }
+            if (fromPos >= 0 && toPos >= 0) {
+                rows = rows.toMutableList().apply { add(toPos, removeAt(fromPos)) }
+                if (isShuffle) viewModel.movePlayOrder(fromPos, toPos) else viewModel.moveQueueItem(fromPos, toPos)
             }
         }
+        // Without shuffle a row's queue index is its position, which a drag changes at once.
+        val displayed = if (isShuffle) rows else rows.mapIndexed { pos, row -> IndexedValue(pos, row.value) }
 
         // NOW PLAYING: pinned above the list; tap returns to the full player.
         currentTrack?.let { track ->
@@ -259,24 +291,75 @@ fun PlaylistQueueScreen(
             }
         }
 
-        // UP NEXT heading, with the actions that apply to the whole queue
-        Row(
+        // While searching, the Queue row itself becomes the field, so nothing below it moves.
+        if (searching) {
+            // Same build as MoonKeyboard's search: BasicTextField on a TextFieldState in a rounded row.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 20.dp, end = 20.dp, top = 12.dp)
+                    .height(52.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(TerminalRaisedPanel)
+                    .border(1.dp, accent, RoundedCornerShape(8.dp))
+                    .padding(start = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(20.dp), tint = MutedText)
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(start = 10.dp),
+                    contentAlignment = Alignment.CenterStart
+                ) {
+                    if (search.isEmpty()) Text("Search the queue...", color = MutedText, fontSize = 15.sp)
+                    BasicTextField(
+                        state = searchState,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(searchFocus)
+                            .testTag("queue_search_input"),
+                        textStyle = TextStyle(color = PrimaryText, fontSize = 15.sp),
+                        cursorBrush = SolidColor(accent),
+                        lineLimits = TextFieldLineLimits.SingleLine
+                    )
+                }
+                IconButton(onClick = { closeSearch() }) {
+                    Icon(Icons.Default.Clear, contentDescription = "Close search", tint = MutedText)
+                }
+            }
+            // Opens with the keyboard up, ready to type.
+            LaunchedEffect(Unit) { searchFocus.requestFocus() }
+        } else Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 20.dp, end = 12.dp, top = 14.dp),
+                .padding(start = 20.dp, end = 12.dp, top = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            // QUEUE heading, with the actions that apply to the whole queue
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "Up next",
+                    text = "Queue",
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
                     color = PrimaryText
                 )
                 Text(
-                    text = "${upcoming.size} songs · ${Track.formatDuration(upcomingDurationMs)}",
+                    text = "${queue.size} songs in queue · ${Track.formatDuration(totalDurationMs)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MutedText
+                )
+            }
+            IconButton(
+                onClick = { searching = true },
+                enabled = queue.isNotEmpty(),
+                modifier = Modifier.testTag("queue_search_button")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Search,
+                    contentDescription = "Search the queue",
+                    tint = PrimaryText,
+                    modifier = Modifier.size(22.dp)
                 )
             }
             IconButton(
@@ -313,20 +396,91 @@ fun PlaylistQueueScreen(
                 .weight(1f)
                 .padding(horizontal = 20.dp)
         ) {
-            if (playedCount > 0) {
-                item(key = "played_toggle") {
+            val query = search.trim()
+            fun matches(t: Track) = query.isBlank() ||
+                t.title.contains(query, ignoreCase = true) ||
+                t.artist.contains(query, ignoreCase = true) ||
+                t.album.contains(query, ignoreCase = true)
+
+            // Played and Up next follow the play order around the current song, which sits in
+            // the card above and is skipped in the list.
+            val currentPos = displayed.indexOfFirst { it.index == currentIndex }
+            val played = if (currentPos > 0) displayed.take(currentPos) else emptyList()
+            val upcoming = displayed.drop(currentPos + 1)
+            val playedIndices = played.mapTo(HashSet()) { it.index }
+            val filtering = query.isNotBlank()
+
+            // Play Next for any song but the current one and the one already next in play order.
+            // With shuffle on, the move lands beside the current song and the service also makes
+            // it next in the shuffled order.
+            fun playNextAction(index: Int): (() -> Unit)? {
+                if (currentIndex < 0 || index == currentIndex || upcoming.firstOrNull()?.index == index) return null
+                val target = if (isShuffle) (if (index < currentIndex) currentIndex else currentIndex + 1)
+                    else playNextTarget(index, currentIndex) ?: return null
+                return { viewModel.playQueueItemNext(index, target) }
+            }
+
+            val visible = if (filtering) {
+                // Search reaches the whole queue, played songs included (shown dimmed).
+                displayed.filter { (i, e) -> i != currentIndex && matches(e.second) }.also { hits ->
+                    item(key = "search_count") {
+                        Text(
+                            text = "${hits.size} ${if (hits.size == 1) "match" else "matches"} in the queue of ${queue.size} · played songs included",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MutedText,
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
+                    }
+                }
+            } else {
+                // Played songs are a section of their own, so it's plain they're still in the queue.
+                if (played.isNotEmpty()) {
+                    item(key = "played_section") {
+                        PlayedSectionRow(
+                            tracks = played.map { it.value.second },
+                            expanded = showPlayed,
+                            onToggle = { showPlayed = !showPlayed }
+                        )
+                    }
+                }
+                upcoming
+            }
+            if (!filtering && showPlayed) {
+                items(played, key = { it.value.first }) { (index, entry) ->
+                    val (key, track) = entry
+                    ReorderableItem(reorderState, key = key) { isDragging ->
+                        NumberedQueueTrackRow(
+                            track = track,
+                            index = index + 1,
+                            isCurrent = false,
+                            isPlaying = false,
+                            isPlayed = true,
+                            isDragging = isDragging,
+                            accentColor = accent,
+                            dragHandle = Modifier.longPressDraggableHandle(
+                                onDragStarted = { haptic.performHapticFeedback(HapticFeedbackType.LongPress) }
+                            ),
+                            onPlay = { viewModel.skipToQueueIndex(index) },
+                            onPlayNext = playNextAction(index),
+                            onAddToPlaylist = { viewModel.setTrackToAddToPlaylist(track) },
+                            onRemove = { viewModel.removeFromQueue(index) }
+                        )
+                    }
+                }
+            }
+            if (!filtering && upcoming.isNotEmpty()) {
+                item(key = "up_next_label") {
                     Text(
-                        text = if (showPlayed) "Hide played songs ▴" else "Show $playedCount played ${if (playedCount == 1) "song" else "songs"} ▾",
-                        style = MaterialTheme.typography.bodySmall,
+                        text = "UP NEXT · ${upcoming.size}",
+                        style = MaterialTheme.typography.labelSmall,
                         color = MutedText,
-                        modifier = Modifier
-                            .clickable { showPlayed = !showPlayed }
-                            .padding(vertical = 10.dp)
+                        fontFamily = FontFamily.Monospace,
+                        letterSpacing = 1.4.sp,
+                        modifier = Modifier.padding(top = 12.dp, bottom = 4.dp)
                     )
                 }
             }
-
-            if (upcoming.isEmpty() && !showPlayed) {
+            if (visible.isEmpty()) {
                 item {
                     Box(
                         modifier = Modifier
@@ -335,35 +489,35 @@ fun PlaylistQueueScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = if (queue.isEmpty()) "> QUEUE IS EMPTY" else "> NOTHING AFTER THIS SONG",
+                            text = when {
+                                queue.isEmpty() -> "> QUEUE IS EMPTY"
+                                query.isNotBlank() -> "> NO MATCHES IN QUEUE"
+                                else -> "> NOTHING UP NEXT"
+                            },
                             style = MaterialTheme.typography.labelMedium,
                             color = MutedText
                         )
                     }
                 }
             }
-            // The current song is in the card above; positions stay those of the whole queue.
-            val visible = order.withIndex().filter { (i, _) -> i > currentIndex || (showPlayed && i < currentIndex) }
             items(visible, key = { it.value.first }) { (index, entry) ->
                 val (key, track) = entry
                 ReorderableItem(reorderState, key = key) { isDragging ->
-                        val isCurrent = index == currentIndex
                         NumberedQueueTrackRow(
                             track = track,
                             index = index + 1,
-                            isCurrent = isCurrent,
-                            isPlaying = isCurrent && isPlaying,
-                            isPlayed = index < currentIndex,
+                            isCurrent = false,
+                            isPlaying = false,
+                            isPlayed = index in playedIndices,
                             isDragging = isDragging,
                             accentColor = accent,
-                            // Long-press first, so a scroll that starts on the handle stays a scroll.
-                            dragHandle = Modifier.longPressDraggableHandle(
+                            // Reordering is off while searching: filtered rows don't map 1:1 to queue
+                            // positions. Long-press first so a scroll starting on the handle stays a scroll.
+                            dragHandle = if (query.isBlank()) Modifier.longPressDraggableHandle(
                                 onDragStarted = { haptic.performHapticFeedback(HapticFeedbackType.LongPress) }
-                            ),
+                            ) else null,
                             onPlay = { viewModel.skipToQueueIndex(index) },
-                            onPlayNext = playNextTarget(index, currentIndex)?.let { target ->
-                                { viewModel.playQueueItemNext(index, target) }
-                            },
+                            onPlayNext = playNextAction(index),
                             onAddToPlaylist = { viewModel.setTrackToAddToPlaylist(track) },
                             onRemove = { viewModel.removeFromQueue(index) }
                         )
@@ -385,6 +539,54 @@ internal fun playNextTarget(from: Int, current: Int): Int? = when {
     current < 0 || from == current || from == current + 1 -> null
     from > current -> current + 1
     else -> current
+}
+
+/**
+ * The played songs as one row: their covers stacked (latest first), how many, and that they're
+ * still in the queue. Tapping it opens or closes the list of them below.
+ */
+@Composable
+private fun PlayedSectionRow(tracks: List<Track>, expanded: Boolean, onToggle: () -> Unit) {
+    Surface(
+        onClick = onToggle,
+        shape = RoundedCornerShape(10.dp),
+        color = TerminalRaisedPanel,
+        border = androidx.compose.foundation.BorderStroke(1.dp, TerminalBorder),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp)
+            .testTag("queue_played_section")
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box {
+                tracks.takeLast(3).reversed().forEachIndexed { i, track ->
+                    Box(modifier = Modifier.padding(start = (i * 18).dp)) { QueueThumb(track, size = 30.dp) }
+                }
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Played · ${tracks.size}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = PrimaryText
+                )
+                Text(
+                    text = "Still in the queue · tap to ${if (expanded) "hide" else "see or replay"}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MutedText
+                )
+            }
+            Icon(
+                imageVector = if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                contentDescription = null,
+                tint = MutedText
+            )
+        }
+    }
 }
 
 /** Rounded cover thumbnail with the app logo underneath for songs without art. */

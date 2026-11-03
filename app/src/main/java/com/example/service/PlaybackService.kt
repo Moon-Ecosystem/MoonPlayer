@@ -13,6 +13,7 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
+import androidx.media3.common.Timeline
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.ShuffleOrder.DefaultShuffleOrder
@@ -92,6 +93,11 @@ class PlaybackService : MediaSessionService() {
 
     private val _isShuffleMode = MutableStateFlow(false)
     val isShuffleMode = _isShuffleMode.asStateFlow()
+
+    // Queue indices in the order they play: the list order, or the player's own order with
+    // shuffle on (shuffle never reorders the queue list itself).
+    private val _playOrder = MutableStateFlow<List<Int>>(emptyList())
+    val playOrder = _playOrder.asStateFlow()
 
     private val _playbackSpeed = MutableStateFlow(1.0f)
     val playbackSpeed = _playbackSpeed.asStateFlow()
@@ -218,6 +224,12 @@ class PlaybackService : MediaSessionService() {
 
             override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
                 _isShuffleMode.value = shuffleModeEnabled
+                _playOrder.value = currentPlayOrder()
+            }
+
+            // Items added, moved or removed, and new shuffle orders, all change the timeline.
+            override fun onTimelineChanged(timeline: Timeline, reason: Int) {
+                _playOrder.value = currentPlayOrder()
             }
 
             override fun onPlaybackParametersChanged(playbackParameters: PlaybackParameters) {
@@ -304,6 +316,22 @@ class PlaybackService : MediaSessionService() {
         val order = if (player.shuffleModeEnabled) shuffledOrder() else null
         player.addMediaItem(index, track.toMediaItem())
         order?.let { player.setShuffleOrder(DefaultShuffleOrder(shuffleOrderWithInsert(it, index, after), System.nanoTime())) }
+    }
+
+    /** The list indices in the order they'll play: shuffled when shuffle is on. */
+    private fun currentPlayOrder(): List<Int> =
+        if (player.shuffleModeEnabled) shuffledOrder() else (0 until player.mediaItemCount).toList()
+
+    /**
+     * With shuffle on, moves a song within the play order (the queue screen's drag), from
+     * position [fromPos] to [toPos] of that order; the queue list itself stays as it is.
+     */
+    @OptIn(UnstableApi::class)
+    fun movePlayOrder(fromPos: Int, toPos: Int) {
+        val order = shuffledOrder().toMutableList()
+        if (fromPos !in order.indices || toPos !in order.indices) return
+        order.add(toPos, order.removeAt(fromPos))
+        player.setShuffleOrder(DefaultShuffleOrder(order.toIntArray(), System.nanoTime()))
     }
 
     /** The list indices in the order shuffle plays them. */

@@ -125,6 +125,7 @@ fun MainPlayerScreen(
     val currentIndex by viewModel.currentIndex.collectAsState()
     val repeatMode by viewModel.repeatMode.collectAsState()
     val isShuffle by viewModel.isShuffleMode.collectAsState()
+    val playOrder by viewModel.playOrder.collectAsState()
     val speed by viewModel.playbackSpeed.collectAsState()
     val sleepTimerSecs by viewModel.sleepTimerRemaining.collectAsState()
     val stopAtEnd by viewModel.isStopAtEndActive.collectAsState()
@@ -553,11 +554,13 @@ fun MainPlayerScreen(
             // 6. UP NEXT: the next song; tap (or swipe up) for the whole queue
             if (currentTrack != null) {
                 UpNextCard(
-                    nextTitle = when {
-                        isShuffle -> "Shuffle on · ${queue.size} songs"
-                        currentIndex + 1 < queue.size -> queue[currentIndex + 1].let { "${it.title} · ${it.artist}" }
-                        repeatMode == Player.REPEAT_MODE_ALL && queue.isNotEmpty() -> queue.first().let { "${it.title} · ${it.artist}" }
-                        else -> "End of queue"
+                    // The next song in play order (shuffled with shuffle on), wrapping with repeat all.
+                    nextTitle = run {
+                        val order = playOrder.takeIf { it.size == queue.size } ?: queue.indices.toList()
+                        val pos = order.indexOf(currentIndex)
+                        val next = order.getOrNull(pos + 1)
+                            ?: order.firstOrNull()?.takeIf { repeatMode == Player.REPEAT_MODE_ALL }
+                        next?.let { queue[it] }?.let { "${it.title} · ${it.artist}" } ?: "End of queue"
                     },
                     onClick = { viewModel.navigateTo(Screen.QUEUE) }
                 )

@@ -401,6 +401,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _isShuffleMode = MutableStateFlow(false)
     val isShuffleMode = _isShuffleMode.asStateFlow()
 
+    // Queue indices in the order they play (shuffled with shuffle on); the queue list never reorders.
+    private val _playOrder = MutableStateFlow<List<Int>>(emptyList())
+    val playOrder = _playOrder.asStateFlow()
+
     private val _playbackSpeed = MutableStateFlow(1.0f)
     val playbackSpeed = _playbackSpeed.asStateFlow()
 
@@ -630,6 +634,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch {
             service.isShuffleMode.collect { _isShuffleMode.value = it }
+        }
+        viewModelScope.launch {
+            service.playOrder.collect { _playOrder.value = it }
         }
         viewModelScope.launch {
             service.playbackSpeed.collect { _playbackSpeed.value = it }
@@ -947,6 +954,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** The queue's Play Next: moves an already-queued song to play after the current one, shuffle on or off. */
+    /** With shuffle on, a drag on the queue screen reorders the play order, not the list. */
+    fun movePlayOrder(fromPos: Int, toPos: Int) {
+        playbackService?.movePlayOrder(fromPos, toPos)
+    }
+
     fun playQueueItemNext(from: Int, to: Int) {
         playbackService?.moveQueueItem(from, to, playNext = true)
     }
