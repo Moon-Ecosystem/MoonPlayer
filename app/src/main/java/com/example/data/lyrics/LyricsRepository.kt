@@ -4,6 +4,11 @@ import android.content.Context
 import android.net.Uri
 import android.provider.DocumentsContract
 import android.util.Log
+import androidx.annotation.OptIn
+import androidx.media3.common.MediaItem
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.MetadataRetriever
+import java.util.concurrent.TimeUnit
 import com.example.data.db.LyricsDao
 import com.example.data.db.LyricsEntity
 import com.example.data.model.Track
@@ -176,16 +181,32 @@ class LyricsRepository(private val context: Context, private val dao: LyricsDao)
         return saved.plain?.let(::lyricsFromText)?.let { mapOf(LyricsKind.ORIGINAL to it) } ?: emptyMap()
     }
 
-    /** The lyrics tags in the audio file, one per kind (synced beats plain), in kind order. */
+    /**
+     * The lyrics tags in the audio file, one per kind (synced beats plain), in kind order: an ID3
+     * tag at the start (MP3, also some AAC), else the tags Media3 reads for M4A, FLAC, Ogg and Opus.
+     */
     private fun embeddedVersions(track: Track): List<Pair<LyricsKind, Lyrics>> {
+        val uri = Uri.parse(track.contentUri)
         val tags = try {
-            context.contentResolver.openInputStream(Uri.parse(track.contentUri))?.use { readId3Lyrics(it.buffered()) }.orEmpty()
+            context.contentResolver.openInputStream(uri)?.use { readId3Lyrics(it.buffered()) }.orEmpty()
+                .ifEmpty { if (track.mimeType == "audio/mpeg") emptyList() else readTagLyrics(uri) }
         } catch (e: Exception) {
             // Unreadable file or lost access: the song simply has no lyrics of its own.
             Log.w(TAG, "Couldn't read lyrics tags (${e.javaClass.simpleName})")
             emptyList()
         }
         return sortEmbedded(tags, track.title)
+    }
+
+    // shortcut: WAV isn't covered; Media3 skips its "id3 " chunk. Read that chunk with readId3Lyrics if WAVs with lyrics turn up.
+    @OptIn(UnstableApi::class)
+    private fun readTagLyrics(uri: Uri): List<EmbeddedLyrics> {
+        val groups = MetadataRetriever.retrieveMetadata(context, MediaItem.fromUri(uri)).get(10, TimeUnit.SECONDS)
+        val entries = (0 until groups.length).flatMap { g ->
+            val metadata = groups[g].getFormat(0).metadata ?: return@flatMap emptyList()
+            (0 until metadata.length()).map { metadata[it] }
+        }
+        return lyricsFromMetadata(entries)
     }
 
     private companion object {
