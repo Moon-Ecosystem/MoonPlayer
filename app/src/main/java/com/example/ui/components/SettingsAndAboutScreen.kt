@@ -300,12 +300,11 @@ fun SettingsScreen(
 
         SettingsToggleRow(
             title = "Online Lyrics",
-            subtitle = "Look up lyrics on LRCLIB. Sends only the song's title, artist, album and length; results are saved on the phone",
+            subtitle = "Look each song up on LRCLIB once, for its original, romaji and translation. Sends only the title, artist, album and length; results are saved on the phone",
             checked = settings.onlineLyrics == true,
             onCheckedChange = { viewModel.setOnlineLyrics(it) },
             accentColor = accent
         )
-
         Spacer(modifier = Modifier.height(4.dp))
 
         SettingsToggleRow(

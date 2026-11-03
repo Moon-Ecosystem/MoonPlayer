@@ -63,8 +63,7 @@ private class LrclibBusyException : IOException("LRCLIB is busy")
 
 /**
  * Finds a song's lyrics in up to three places: a same-named .lrc beside it, the song file's own
- * tags, and LRCLIB (a saved earlier answer, or a lookup when [online] and no source ranked above
- * LRCLIB has synced lyrics, or when the user asks). For each kind one
+ * tags, and LRCLIB (a saved earlier answer, or a lookup when [online] or the user asks). For each kind one
  * source is shown: the one picked for the song, else synced-first (if preferred) then the user's
  * order. Online results, including "none", are saved so each song is looked up once.
  */
@@ -72,8 +71,8 @@ class LyricsRepository(private val context: Context, private val dao: LyricsDao)
 
     /**
      * [preferRomaji]: open on romaji when the song has it. [order] and [preferSynced] are the
-     * Settings › Lyrics source preferences. [forceLrclib]: ask LRCLIB now whatever the rules say
-     * (the sheet's "Look up on LRCLIB"), online setting or not.
+     * Settings › Lyrics source preferences. [forceLrclib]: ask LRCLIB now although online lyrics
+     * is off (the sheet's "Look up on LRCLIB").
      */
     suspend fun find(
         track: Track,
@@ -94,10 +93,10 @@ class LyricsRepository(private val context: Context, private val dao: LyricsDao)
 
         val row = dao.get(track.id)
         var unavailable: LyricsLookup.Unavailable? = null
-        // A row that only holds a choice isn't an LRCLIB answer. Synced lyrics from a source the
-        // user ranks above LRCLIB already follow the song, so LRCLIB isn't asked then.
-        val syncedSources = byKind.values.flatMap { m -> m.filterValues { it is Lyrics.Synced }.keys }.toSet()
-        val wantLrclib = online && shouldAskLrclib(syncedSources, order)
+        // A row that only holds a choice isn't an LRCLIB answer. Every song is asked once (when
+        // online): one lookup brings all of LRCLIB's versions, and whether it has a romaji or
+        // translation the song lacks can't be known without asking. The answer is saved.
+        val wantLrclib = online
         val savedLrclib = row?.takeIf { it.source == LyricsSource.LRCLIB.name }
         val lrclib = savedLrclib ?: if (forceLrclib || wantLrclib) {
             try {

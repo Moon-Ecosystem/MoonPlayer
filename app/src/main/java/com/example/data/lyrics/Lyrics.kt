@@ -185,16 +185,6 @@ fun sortEmbedded(tags: List<EmbeddedLyrics>, title: String): List<Pair<LyricsKin
  * behaviour (a .lrc, else LRCLIB); lyrics stored in the song file, new since, come after.
  */
 val DEFAULT_LYRICS_SOURCE_ORDER = listOf(LyricsSource.LRC_FILE, LyricsSource.LRCLIB, LyricsSource.EMBEDDED)
-
-/**
- * Whether LRCLIB is worth asking automatically: unless a source ranked above it in [order]
- * already has synced lyrics. With the default order that's "no synced .lrc", as in 0.1.
- */
-fun shouldAskLrclib(syncedSources: Set<LyricsSource>, order: List<LyricsSource>): Boolean {
-    val above = order.takeWhile { it != LyricsSource.LRCLIB }
-    return above.none { it in syncedSources }
-}
-
 /**
  * The automatic pick among one kind's [candidates]: a synced one first when [preferSynced], then
  * the user's source [order]. Null when there are none.

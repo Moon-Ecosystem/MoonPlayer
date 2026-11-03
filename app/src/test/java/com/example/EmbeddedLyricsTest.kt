@@ -11,7 +11,6 @@ import com.example.data.lyrics.encodeChoice
 import com.example.data.lyrics.parseChoice
 import com.example.data.lyrics.parseSourceOrder
 import com.example.data.lyrics.readId3Lyrics
-import com.example.data.lyrics.shouldAskLrclib
 import com.example.data.lyrics.sortEmbedded
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -127,16 +126,6 @@ class EmbeddedLyricsTest {
             autoSource(mapOf(LyricsSource.EMBEDDED to synced, LyricsSource.LRCLIB to synced), listOf(LyricsSource.EMBEDDED, LyricsSource.LRCLIB), true)
         )
         assertNull(autoSource(emptyMap(), order, true))
-    }
-
-    @Test
-    fun `LRCLIB is asked unless a source ranked above it already has synced lyrics`() {
-        val order = DEFAULT_LYRICS_SOURCE_ORDER
-        // As in 0.1: no synced .lrc means look it up; synced lyrics in the file don't count, they rank below.
-        assertTrue(shouldAskLrclib(setOf(LyricsSource.EMBEDDED), order))
-        assertFalse(shouldAskLrclib(setOf(LyricsSource.LRC_FILE), order))
-        // With the song file ranked first, its synced lyrics are enough.
-        assertFalse(shouldAskLrclib(setOf(LyricsSource.EMBEDDED), listOf(LyricsSource.EMBEDDED, LyricsSource.LRCLIB, LyricsSource.LRC_FILE)))
     }
 
     @Test
