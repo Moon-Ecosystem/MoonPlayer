@@ -8,6 +8,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import com.example.viewmodel.MainViewModel
 import com.example.viewmodel.Screen
 
@@ -36,6 +38,22 @@ fun PlayerQueuePager(
     LaunchedEffect(pagerState) {
         snapshotFlow { pagerState.settledPage }.collect { page ->
             viewModel.navigateTo(if (page == queuePage) Screen.QUEUE else Screen.PLAYER)
+        }
+    }
+
+    // Drop the keyboard (queue search) once the queue is 20% of the way off screen, not after
+    // the swipe settles; a small pull that snaps back leaves it up.
+    val keyboard = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
+    LaunchedEffect(pagerState) {
+        // currentPage flips to the player only past halfway, so before that read the offset.
+        snapshotFlow {
+            pagerState.currentPage != queuePage || pagerState.currentPageOffsetFraction <= -0.2f
+        }.collect { leaving ->
+            if (leaving) {
+                keyboard?.hide()
+                focusManager.clearFocus()
+            }
         }
     }
 

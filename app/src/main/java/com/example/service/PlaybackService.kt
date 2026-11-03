@@ -13,6 +13,7 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
+import androidx.media3.common.Timeline
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.ShuffleOrder.DefaultShuffleOrder
@@ -23,6 +24,7 @@ import com.example.MainActivity
 import com.example.R
 import com.example.data.fileExists
 import com.example.data.model.Track
+import com.example.data.settings.SettingsManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -43,6 +45,15 @@ internal fun shuffleOrderWithInsert(order: List<Int>, inserted: Int, after: Int?
     val at = if (after == null) shifted.size else shifted.indexOf(if (after >= inserted) after + 1 else after) + 1
     shifted.add(at, inserted)
     return shifted.toIntArray()
+}
+
+/**
+ * A new play order for turning shuffle on: the songs before [current] stay played (in list
+ * order), [current] keeps playing, and every song after it is shuffled afresh.
+ */
+internal fun freshShuffleOrder(count: Int, current: Int, random: kotlin.random.Random = kotlin.random.Random.Default): IntArray {
+    val now = current.coerceIn(0, (count - 1).coerceAtLeast(0))
+    return ((0 until now) + now + (now + 1 until count).shuffled(random)).take(count).toIntArray()
 }
 
 /** Shuffle play order after moving list item [from] to [to], with it playing right after [current]. */
@@ -92,6 +103,11 @@ class PlaybackService : MediaSessionService() {
 
     private val _isShuffleMode = MutableStateFlow(false)
     val isShuffleMode = _isShuffleMode.asStateFlow()
+
+    // Queue indices in the order they play: the list order, or the player's own order with
+    // shuffle on (shuffle never reorders the queue list itself).
+    private val _playOrder = MutableStateFlow<List<Int>>(emptyList())
+    val playOrder = _playOrder.asStateFlow()
 
     private val _playbackSpeed = MutableStateFlow(1.0f)
     val playbackSpeed = _playbackSpeed.asStateFlow()
@@ -218,6 +234,12 @@ class PlaybackService : MediaSessionService() {
 
             override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
                 _isShuffleMode.value = shuffleModeEnabled
+                _playOrder.value = currentPlayOrder()
+            }
+
+            // Items added, moved or removed, and new shuffle orders, all change the timeline.
+            override fun onTimelineChanged(timeline: Timeline, reason: Int) {
+                _playOrder.value = currentPlayOrder()
             }
 
             override fun onPlaybackParametersChanged(playbackParameters: PlaybackParameters) {
@@ -226,14 +248,31 @@ class PlaybackService : MediaSessionService() {
         })
     }
 
+    private val settingsManager by lazy { SettingsManager(applicationContext) }
+
+    /**
+     * Saves the song and position for Resume on App Launch. The service does this, not the
+     * screen, because it keeps playing after the app is closed or swiped away.
+     */
+    private fun savePosition() {
+        val uri = _currentTrack.value?.contentUri ?: return
+        val pos = player.currentPosition
+        // Its own scope: onDestroy cancels serviceScope, and blocking the main thread for the
+        // write froze the app (ANR) on swipe-away. The process outlives onDestroy long enough.
+        CoroutineScope(Dispatchers.IO).launch { settingsManager.savePlaybackState(uri, pos) }
+    }
+
     private fun startProgressTracker() {
         progressJob?.cancel()
         progressJob = serviceScope.launch {
+            var ticks = 0
             // Stops while paused instead of waking every 200ms; onIsPlayingChanged restarts it.
             while (isActive && player.isPlaying) {
                 val pos = player.currentPosition
                 _currentPositionMs.value = pos
                 _durationMs.value = player.duration.coerceAtLeast(0L)
+                // Every 5 s, so being killed mid-song loses at most that much.
+                if (++ticks % 25 == 0) savePosition()
 
                 // A-B loop check
                 val loopEnd = _abLoopEndMs.value
@@ -304,6 +343,22 @@ class PlaybackService : MediaSessionService() {
         val order = if (player.shuffleModeEnabled) shuffledOrder() else null
         player.addMediaItem(index, track.toMediaItem())
         order?.let { player.setShuffleOrder(DefaultShuffleOrder(shuffleOrderWithInsert(it, index, after), System.nanoTime())) }
+    }
+
+    /** The list indices in the order they'll play: shuffled when shuffle is on. */
+    private fun currentPlayOrder(): List<Int> =
+        if (player.shuffleModeEnabled) shuffledOrder() else (0 until player.mediaItemCount).toList()
+
+    /**
+     * With shuffle on, moves a song within the play order (the queue screen's drag), from
+     * position [fromPos] to [toPos] of that order; the queue list itself stays as it is.
+     */
+    @OptIn(UnstableApi::class)
+    fun movePlayOrder(fromPos: Int, toPos: Int) {
+        val order = shuffledOrder().toMutableList()
+        if (fromPos !in order.indices || toPos !in order.indices) return
+        order.add(toPos, order.removeAt(fromPos))
+        player.setShuffleOrder(DefaultShuffleOrder(order.toIntArray(), System.nanoTime()))
     }
 
     /** The list indices in the order shuffle plays them. */
@@ -412,6 +467,8 @@ class PlaybackService : MediaSessionService() {
     fun seekTo(positionMs: Long) {
         player.seekTo(positionMs)
         _currentPositionMs.value = positionMs
+        // A seek while paused would otherwise not be saved until playback starts again.
+        savePosition()
     }
 
     fun skipToNext() {
@@ -445,8 +502,15 @@ class PlaybackService : MediaSessionService() {
         _repeatMode.value = nextMode
     }
 
+    @OptIn(UnstableApi::class)
     fun toggleShuffle() {
         val newShuffle = !player.shuffleModeEnabled
+        // Media3 keeps the order it made when the queue was loaded, so without this every
+        // off-then-on would bring back the same shuffle.
+        if (newShuffle && player.mediaItemCount > 1) {
+            val order = freshShuffleOrder(player.mediaItemCount, player.currentMediaItemIndex)
+            player.setShuffleOrder(DefaultShuffleOrder(order, System.nanoTime()))
+        }
         player.shuffleModeEnabled = newShuffle
         _isShuffleMode.value = newShuffle
     }
@@ -522,7 +586,15 @@ class PlaybackService : MediaSessionService() {
         return super.onBind(intent) ?: binder
     }
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        // Swiped away from Recents: save now, whether or not playback carries on.
+        savePosition()
+        super.onTaskRemoved(rootIntent)
+    }
+
     override fun onDestroy() {
+        // Before the player is released, while its position is still there.
+        savePosition()
         mediaSession?.run {
             player.release()
             release()

@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PieChart
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -101,6 +102,11 @@ fun StatsScreen(
     val range by viewModel.statsRange.collectAsState()
     val allTracks by viewModel.allTracks.collectAsState()
     val favoriteIds by viewModel.favoriteTrackIds.collectAsState()
+    val settings by viewModel.settings.collectAsState()
+    // With scrobbles hidden in Settings the page is this phone's stats only, whatever was picked last.
+    val online = viewModel.statsOnline.collectAsState().value && settings.showScrobbles
+    val scrobbles by viewModel.scrobbleState.collectAsState()
+    val connected = settings.scrobbleUser.isNotBlank()
     val accent = LocalAccentColor.current
     var showResetDialog by remember { mutableStateOf(false) }
     var tab by rememberSaveable { mutableIntStateOf(0) }
@@ -130,15 +136,28 @@ fun StatsScreen(
                     color = PrimaryText
                 )
                 Text(
-                    text = "[ YOUR LISTENING, ON THIS PHONE ]",
+                    text = when {
+                        !online -> "[ YOUR LISTENING, ON THIS PHONE ]"
+                        connected -> "[ FROM ${settings.scrobbleService.label.uppercase()} · ${settings.scrobbleUser} ]"
+                        else -> "[ YOUR SCROBBLES, ONLINE ]"
+                    },
                     style = MaterialTheme.typography.labelSmall,
                     color = MutedText,
-                    fontFamily = FontFamily.Monospace
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
             Spacer(modifier = Modifier.weight(1f))
-            IconButton(onClick = { showResetDialog = true }, modifier = Modifier.minimumInteractiveComponentSize()) {
-                Icon(imageVector = Icons.Default.DeleteSweep, contentDescription = "Reset stats", tint = MutedText)
+            // Scrobbles can't be deleted from here, so that side gets Refresh instead of Reset.
+            if (!online) {
+                IconButton(onClick = { showResetDialog = true }, modifier = Modifier.minimumInteractiveComponentSize()) {
+                    Icon(imageVector = Icons.Default.DeleteSweep, contentDescription = "Reset stats", tint = MutedText)
+                }
+            } else if (connected) {
+                IconButton(onClick = viewModel::refreshScrobbles, modifier = Modifier.minimumInteractiveComponentSize()) {
+                    Icon(imageVector = Icons.Default.Refresh, contentDescription = "Refresh scrobbles", tint = MutedText)
+                }
             }
         }
 
@@ -180,6 +199,19 @@ fun StatsScreen(
             )
         }
 
+        if (settings.showScrobbles) {
+            StatsSourceSwitch(
+                labels = listOf("ON THIS PHONE", if (connected) settings.scrobbleService.label.uppercase() else "SCROBBLES"),
+                selected = if (online) 1 else 0,
+                onSelect = { viewModel.setStatsOnline(it == 1) }
+            )
+        }
+
+        if (online) {
+            ScrobbleStatsContent(scrobbles, settings.scrobbleService, settings.scrobbleUser, range, accent, viewModel)
+            return@Column
+        }
+
         // RANGE: applies to every number and chart below
         StatsRangeChips(range, accent, viewModel::setStatsRange)
 
@@ -199,30 +231,7 @@ fun StatsScreen(
             return@Column
         }
 
-        TabRow(
-            selectedTabIndex = tab,
-            containerColor = TerminalBlack,
-            contentColor = accent,
-            indicator = { positions ->
-                TabRowDefaults.SecondaryIndicator(Modifier.tabIndicatorOffset(positions[tab]), color = accent)
-            },
-            divider = { HorizontalDivider(color = TerminalBorder) }
-        ) {
-            STATS_TABS.forEachIndexed { i, title ->
-                Tab(
-                    selected = tab == i,
-                    onClick = { tab = i },
-                    text = {
-                        Text(
-                            title.uppercase(),
-                            fontFamily = FontFamily.Monospace,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = if (tab == i) accent else MutedText
-                        )
-                    }
-                )
-            }
-        }
+        StatsTabs(STATS_TABS, tab, accent) { tab = it }
 
         // Each tab starts at its top.
         key(tab) {
@@ -275,7 +284,70 @@ fun StatsDetailScreen(viewModel: MainViewModel, onBack: () -> Unit) {
 }
 
 @Composable
-private fun StatsRangeChips(range: StatsRange, accent: Color, onSelect: (StatsRange) -> Unit) {
+internal fun StatsTabs(titles: List<String>, selected: Int, accent: Color, onSelect: (Int) -> Unit) {
+    TabRow(
+        selectedTabIndex = selected,
+        containerColor = TerminalBlack,
+        contentColor = accent,
+        indicator = { positions ->
+            TabRowDefaults.SecondaryIndicator(Modifier.tabIndicatorOffset(positions[selected]), color = accent)
+        },
+        divider = { HorizontalDivider(color = TerminalBorder) }
+    ) {
+        titles.forEachIndexed { i, title ->
+            Tab(
+                selected = selected == i,
+                onClick = { onSelect(i) },
+                text = {
+                    Text(
+                        title.uppercase(),
+                        fontFamily = FontFamily.Monospace,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (selected == i) accent else MutedText
+                    )
+                }
+            )
+        }
+    }
+}
+
+/** This phone's history or the scrobble service, as one segmented control. */
+@Composable
+private fun StatsSourceSwitch(labels: List<String>, selected: Int, onSelect: (Int) -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = TerminalRaisedPanel,
+        border = androidx.compose.foundation.BorderStroke(1.dp, TerminalBorder),
+        modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+    ) {
+        Row(modifier = Modifier.padding(3.dp)) {
+            labels.forEachIndexed { i, label ->
+                val on = i == selected
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(40.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(if (on) TerminalBorder else Color.Transparent)
+                        .clickable(role = androidx.compose.ui.semantics.Role.Tab) { onSelect(i) }
+                ) {
+                    Text(
+                        label,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (on) PrimaryText else MutedText,
+                        maxLines = 1
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun StatsRangeChips(range: StatsRange, accent: Color, onSelect: (StatsRange) -> Unit) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
         StatsRange.entries.forEach { r ->
             FilterChip(
@@ -508,7 +580,7 @@ private fun formatPlayDate(at: Long?): String {
 }
 
 @Composable
-private fun StatsChipRow(labels: List<String>, selected: Int, accent: Color, onSelect: (Int) -> Unit) {
+internal fun StatsChipRow(labels: List<String>, selected: Int, accent: Color, onSelect: (Int) -> Unit) {
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(bottom = 6.dp)) {
         labels.forEachIndexed { i, label ->
             FilterChip(
@@ -569,7 +641,7 @@ private fun TrendChart(s: ListeningStats, accent: Color) {
 private fun peakOf(bars: List<Bar>): Bar? = bars.maxByOrNull { it.ms }?.takeIf { it.ms > 0 }
 
 @Composable
-private fun StatsSection(title: String, note: String? = null, content: @Composable () -> Unit) {
+internal fun StatsSection(title: String, note: String? = null, content: @Composable () -> Unit) {
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
         Text(
             text = title,
@@ -589,7 +661,7 @@ private fun StatsSection(title: String, note: String? = null, content: @Composab
 }
 
 @Composable
-private fun StatsPanel(content: @Composable () -> Unit) {
+internal fun StatsPanel(content: @Composable () -> Unit) {
     Surface(
         shape = RoundedCornerShape(8.dp),
         color = TerminalRaisedPanel,
@@ -754,7 +826,7 @@ internal fun formatListenTime(ms: Long): String {
 }
 
 @Composable
-private fun StatMetricCard(
+internal fun StatMetricCard(
     icon: ImageVector,
     title: String,
     value: String,

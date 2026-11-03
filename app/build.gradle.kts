@@ -22,6 +22,15 @@ android {
     }.getOrDefault(1)
     versionName = findProperty("appVersionName") as String? ?: "dev"
 
+    // Last.fm key for reading public profiles (no secret: Moon Player never scrobbles itself).
+    // CI passes LASTFM_API_KEY; local builds read lastfm.apikey from local.properties.
+    val lastfmKey = System.getenv("LASTFM_API_KEY")?.takeIf { it.isNotBlank() }
+      ?: Properties().apply {
+        rootProject.file("local.properties").takeIf { it.exists() }?.reader()?.use { load(it) }
+      }.getProperty("lastfm.apikey")
+      ?: ""
+    buildConfigField("String", "LASTFM_API_KEY", "\"$lastfmKey\"")
+
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 

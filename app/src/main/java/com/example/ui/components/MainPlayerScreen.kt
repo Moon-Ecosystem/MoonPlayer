@@ -95,6 +95,8 @@ import androidx.compose.ui.unit.sp
 import androidx.media3.common.Player
 import coil.compose.AsyncImage
 import com.example.data.artModel
+import com.example.data.lyrics.FileLyricsToggle
+import com.example.data.lyrics.LyricsLookup
 import com.example.data.repository.audioFormatLabel
 import com.example.R
 import com.example.data.model.Track
@@ -125,6 +127,7 @@ fun MainPlayerScreen(
     val currentIndex by viewModel.currentIndex.collectAsState()
     val repeatMode by viewModel.repeatMode.collectAsState()
     val isShuffle by viewModel.isShuffleMode.collectAsState()
+    val playOrder by viewModel.playOrder.collectAsState()
     val speed by viewModel.playbackSpeed.collectAsState()
     val sleepTimerSecs by viewModel.sleepTimerRemaining.collectAsState()
     val stopAtEnd by viewModel.isStopAtEndActive.collectAsState()
@@ -133,6 +136,7 @@ fun MainPlayerScreen(
     val favoriteIds by viewModel.favoriteTrackIds.collectAsState()
     val settings by viewModel.settings.collectAsState()
     val lyricsOpen by viewModel.lyricsOpen.collectAsState()
+    val lyricsState by viewModel.lyricsState.collectAsState()
     val fileMissing by viewModel.currentFileMissing.collectAsState()
 
     val accent = LocalAccentColor.current
@@ -268,6 +272,17 @@ fun MainPlayerScreen(
                                 showOverflowMenu = false
                                 showSongInfo = true
                             }
+                        }
+                        // Only while lyrics are open, and only when LRCLIB's synced lyrics hide the
+                        // file's own; flips in place like A-B, so the menu stays open.
+                        val fileToggle = (lyricsState as? MainViewModel.LyricsUiState.Done)
+                            ?.lookup?.let { it as? LyricsLookup.Found }?.fileToggle
+                        if (lyricsOpen && fileToggle != null) {
+                            PlayerMenuItem(
+                                label = "File's lyrics",
+                                status = if (fileToggle == FileLyricsToggle.SHOW) "Hidden" else "Shown",
+                                active = fileToggle == FileLyricsToggle.HIDE
+                            ) { viewModel.setFileLyricsForSong(fileToggle == FileLyricsToggle.SHOW) }
                         }
                         PlayerMenuItem(
                             label = "Equalizer",
@@ -553,11 +568,13 @@ fun MainPlayerScreen(
             // 6. UP NEXT: the next song; tap (or swipe up) for the whole queue
             if (currentTrack != null) {
                 UpNextCard(
-                    nextTitle = when {
-                        isShuffle -> "Shuffle on · ${queue.size} songs"
-                        currentIndex + 1 < queue.size -> queue[currentIndex + 1].let { "${it.title} · ${it.artist}" }
-                        repeatMode == Player.REPEAT_MODE_ALL && queue.isNotEmpty() -> queue.first().let { "${it.title} · ${it.artist}" }
-                        else -> "End of queue"
+                    // The next song in play order (shuffled with shuffle on), wrapping with repeat all.
+                    nextTitle = run {
+                        val order = playOrder.takeIf { it.size == queue.size } ?: queue.indices.toList()
+                        val pos = order.indexOf(currentIndex)
+                        val next = order.getOrNull(pos + 1)
+                            ?: order.firstOrNull()?.takeIf { repeatMode == Player.REPEAT_MODE_ALL }
+                        next?.let { queue[it] }?.let { "${it.title} · ${it.artist}" } ?: "End of queue"
                     },
                     onClick = { viewModel.navigateTo(Screen.QUEUE) }
                 )

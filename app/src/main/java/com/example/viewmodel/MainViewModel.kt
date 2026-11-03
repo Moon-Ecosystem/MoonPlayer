@@ -14,8 +14,8 @@ import androidx.lifecycle.viewModelScope
 import androidx.media3.common.Player
 import com.example.data.db.PlaylistEntity
 import com.example.data.db.PlaylistTrackEntity
-import com.example.data.lyrics.LyricsKind
 import com.example.data.lyrics.LyricsLookup
+import com.example.data.lyrics.LyricsVersion
 import com.example.data.lyrics.prefersLatinLyrics
 import com.example.data.lyrics.LyricsRepository
 import com.example.data.model.Track
@@ -35,6 +35,10 @@ import com.example.data.stats.StatsKind
 import com.example.data.stats.StatsRange
 import com.example.data.stats.detailStats
 import com.example.data.stats.listeningStats
+import com.example.data.scrobble.ScrobbleException
+import com.example.data.scrobble.ScrobbleRepository
+import com.example.data.scrobble.ScrobbleService
+import com.example.data.scrobble.ScrobbleStats
 import com.example.service.PlaybackService
 import com.example.ui.theme.CelestialCyan
 import com.example.ui.theme.MoonWhite
@@ -311,6 +315,79 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val statsDetail: StateFlow<StatsDetail?> = combine(statsRows, _statsSelection) { (range, rows), selected ->
         selected?.let { (kind, key) -> detailStats(rows, kind, key, range, System.currentTimeMillis()) }
     }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    // SCROBBLE STATS: what Pano Scrobbler sent to Last.fm / Libre.fm, read back from there.
+    private val scrobbleRepository = ScrobbleRepository(application)
+
+    sealed interface ScrobbleUiState {
+        data object NotConnected : ScrobbleUiState
+        data object Loading : ScrobbleUiState
+        /** [refreshing]: the saved copy is showing while a fresh one loads. */
+        data class Loaded(val stats: ScrobbleStats, val refreshing: Boolean = false) : ScrobbleUiState
+        data class Failed(val reason: ScrobbleException.Reason, val message: String?) : ScrobbleUiState
+    }
+
+    /** The stats page shows the scrobble service instead of this phone's history. */
+    private val _statsOnline = MutableStateFlow(false)
+    val statsOnline = _statsOnline.asStateFlow()
+
+    fun setStatsOnline(online: Boolean) {
+        _statsOnline.value = online
+    }
+
+    private val scrobbleReload = MutableStateFlow(0)
+
+    fun refreshScrobbles() {
+        scrobbleReload.value++
+    }
+
+    // Only fetches while the scrobble side is open; the saved copy shows first, then a fresh one.
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val scrobbleState: StateFlow<ScrobbleUiState> = combine(
+        settingsManager.settingsFlow.map { it.scrobbleService to it.scrobbleUser }.distinctUntilChanged(),
+        _statsRange,
+        _statsOnline,
+        scrobbleReload
+    ) { account, range, online, _ -> Triple(account, range, online) }
+        .flatMapLatest { (account, range, online) ->
+            val (service, user) = account
+            kotlinx.coroutines.flow.flow {
+                when {
+                    user.isBlank() -> emit(ScrobbleUiState.NotConnected)
+                    !online -> Unit
+                    else -> {
+                        val saved = scrobbleRepository.cached(service, user, range)
+                        emit(saved?.let { ScrobbleUiState.Loaded(it, refreshing = true) } ?: ScrobbleUiState.Loading)
+                        emit(
+                            try {
+                                ScrobbleUiState.Loaded(scrobbleRepository.fetch(service, user, range))
+                            } catch (e: ScrobbleException) {
+                                if (e.reason == ScrobbleException.Reason.OFFLINE && saved != null) {
+                                    ScrobbleUiState.Loaded(saved.copy(offline = true))
+                                } else {
+                                    ScrobbleUiState.Failed(e.reason, e.message)
+                                }
+                            }
+                        )
+                    }
+                }
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ScrobbleUiState.Loading)
+
+    fun connectScrobbles(service: ScrobbleService, user: String) {
+        if (user.isBlank()) return
+        viewModelScope.launch { settingsManager.setScrobbleAccount(service, user) }
+    }
+
+    /** Forgets the account and its saved stats; this phone's own stats stay. */
+    fun disconnectScrobbles() {
+        viewModelScope.launch {
+            settingsManager.setScrobbleAccount(settings.value.scrobbleService, "")
+            scrobbleRepository.clear()
+        }
+    }
+
     val settings = settingsManager.settingsFlow.stateIn(
         viewModelScope,
         SharingStarted.WhileSubscribed(5000),
@@ -400,6 +477,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _isShuffleMode = MutableStateFlow(false)
     val isShuffleMode = _isShuffleMode.asStateFlow()
+
+    // Queue indices in the order they play (shuffled with shuffle on); the queue list never reorders.
+    private val _playOrder = MutableStateFlow<List<Int>>(emptyList())
+    val playOrder = _playOrder.asStateFlow()
 
     private val _playbackSpeed = MutableStateFlow(1.0f)
     val playbackSpeed = _playbackSpeed.asStateFlow()
@@ -491,17 +572,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** Shows another version (original / romaji / translation) and remembers it for the song. */
-    fun showLyricsKind(kind: LyricsKind) {
+    /** Shows another version (the file's or LRCLIB's original / romaji / translation) and remembers it for the song. */
+    fun showLyricsVersion(version: LyricsVersion) {
         val track = _currentTrack.value ?: return
         viewModelScope.launch {
-            lyricsRepository.choose(track.id, kind)
+            lyricsRepository.choose(track.id, version)
             loadLyrics(showSpinner = false)
         }
     }
 
     fun setPreferRomaji(enabled: Boolean) {
         viewModelScope.launch { settingsManager.setPreferRomaji(enabled) }
+    }
+
+    /** Hiding scrobbles also leaves the stats page on this phone's side. */
+    fun setShowScrobbles(enabled: Boolean) {
+        if (!enabled) setStatsOnline(false)
+        viewModelScope.launch { settingsManager.setShowScrobbles(enabled) }
+    }
+
+    fun setQueueShowPlayed(enabled: Boolean) {
+        viewModelScope.launch { settingsManager.setQueueShowPlayed(enabled) }
+    }
+
+    fun setKeepFileLyrics(enabled: Boolean) {
+        viewModelScope.launch { settingsManager.setKeepFileLyrics(enabled) }
+    }
+
+    /** Shows (or hides again) the file's own lyrics beside LRCLIB's for the current song only. */
+    fun setFileLyricsForSong(keep: Boolean) {
+        val track = _currentTrack.value ?: return
+        viewModelScope.launch {
+            settingsManager.setFileLyricsForSong(track.id, keep)
+            loadLyrics(showSpinner = false)
+        }
     }
 
     /** The romaji preference in effect: the user's setting, else the phone's language. */
@@ -515,7 +619,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (showSpinner) _lyricsState.value = LyricsUiState.Loading
             val saved = settingsManager.settingsFlow.first()
             val allowed = online ?: saved.onlineLyrics
-            val lookup = lyricsRepository.find(track, online = allowed == true, preferRomaji = effectivePreferRomaji(saved))
+            val lookup = lyricsRepository.find(
+                track,
+                online = allowed == true,
+                preferRomaji = effectivePreferRomaji(saved),
+                keepFileLyrics = saved.keepFileLyrics,
+                keepFileLyricsForSong = track.id in saved.fileLyricsSongs
+            )
             _lyricsState.value = if (allowed == null && lookup !is LyricsLookup.Found) {
                 LyricsUiState.AskOnline
             } else {
@@ -630,6 +740,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch {
             service.isShuffleMode.collect { _isShuffleMode.value = it }
+        }
+        viewModelScope.launch {
+            service.playOrder.collect { _playOrder.value = it }
         }
         viewModelScope.launch {
             service.playbackSpeed.collect { _playbackSpeed.value = it }
@@ -947,6 +1060,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** The queue's Play Next: moves an already-queued song to play after the current one, shuffle on or off. */
+    /** With shuffle on, a drag on the queue screen reorders the play order, not the list. */
+    fun movePlayOrder(fromPos: Int, toPos: Int) {
+        playbackService?.movePlayOrder(fromPos, toPos)
+    }
+
     fun playQueueItemNext(from: Int, to: Int) {
         playbackService?.moveQueueItem(from, to, playNext = true)
     }
@@ -1116,7 +1234,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /** The song info sheet: the file's own details, then its plays in Moon Player. */
     suspend fun songInfo(track: Track): SongInfo {
-        val info = readSongInfo(getApplication(), track)
+        val read = readSongInfo(getApplication(), track)
+        val s = settingsManager.settingsFlow.first()
+        // A missing file has no lyrics to read; only list them for files that are there.
+        val info = if (read.missing) read else read.copy(
+            sections = read.sections + InfoSection(
+                "LYRICS",
+                lyricsRepository.describe(
+                    track,
+                    onlineLyrics = s.onlineLyrics,
+                    preferRomaji = effectivePreferRomaji(s),
+                    keepFileLyrics = s.keepFileLyrics,
+                    keepFileLyricsForSong = track.id in s.fileLyricsSongs
+                )
+            )
+        )
         val history = repository.historySince(0L).first()
         val played = detailStats(history, StatsKind.TRACK, track.id, StatsRange.ALL, System.currentTimeMillis())
         val stats = played.stats.tracks.firstOrNull() ?: return info

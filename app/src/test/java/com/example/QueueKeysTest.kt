@@ -1,11 +1,13 @@
 package com.example
 
 import com.example.data.model.Track
+import com.example.service.freshShuffleOrder
 import com.example.service.shuffleOrderWithInsert
 import com.example.service.shuffleOrderWithMove
 import com.example.ui.components.keyedEntries
 import com.example.ui.components.playNextTarget
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -33,6 +35,20 @@ class QueueKeysTest {
         assertNull(playNextTarget(from = 2, current = 2)) // the current song
         assertNull(playNextTarget(from = 3, current = 2)) // already next
         assertNull(playNextTarget(from = 1, current = -1)) // nothing playing
+    }
+
+    @Test
+    fun `turning shuffle on reshuffles only what's still to come`() {
+        // 10 songs, the 4th (3) playing: 0..2 stay played, 3 stays current, 4..9 get a new order.
+        val a = freshShuffleOrder(10, current = 3, random = kotlin.random.Random(1)).toList()
+        val b = freshShuffleOrder(10, current = 3, random = kotlin.random.Random(2)).toList()
+        assertEquals(listOf(0, 1, 2, 3), a.take(4))
+        assertEquals((4..9).toSet(), a.drop(4).toSet())
+        assertEquals(a.take(4), b.take(4))
+        assertNotEquals(a, b) // a different seed, a different shuffle
+        // Nothing playing yet counts as the first song; one song is just itself.
+        assertEquals(0, freshShuffleOrder(5, current = -1).first())
+        assertEquals(listOf(0), freshShuffleOrder(1, current = 0).toList())
     }
 
     @Test

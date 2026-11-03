@@ -40,6 +40,16 @@ import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerState
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.unit.lerp
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -80,18 +90,21 @@ fun SettingsScreen(
     val pickFolder = rememberFolderPicker { uri, flags ->
         viewModel.addFolder(uri, flags)
     }
+    val tabs = SettingsTab.entries
+    // Saved, so rotating the phone keeps the tab.
+    val pager = rememberPagerState { tabs.size }
+    val scope = rememberCoroutineScope()
 
     Column(
         modifier = modifier
             .fillMaxSize()
             .background(TerminalBlack)
-            .padding(horizontal = 16.dp, vertical = 8.dp)
-            .verticalScroll(rememberScrollState())
+            .padding(vertical = 8.dp)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 4.dp),
+                .padding(horizontal = 16.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = onBack, modifier = Modifier.minimumInteractiveComponentSize()) {
@@ -114,10 +127,28 @@ fun SettingsScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        SettingsTabRow(tabs.map { it.title }, pager, accent) { i -> scope.launch { pager.animateScrollToPage(i) } }
 
-        // SECTION: THEME & ACCENT
-        SettingsSectionHeader(title = "ACCENT COLOR THEME")
+        // Swipe or tap between tabs. The neighbours stay composed, so a swipe never waits for a
+        // page to build; each page scrolls on its own.
+        HorizontalPager(
+            state = pager,
+            beyondViewportPageCount = 1,
+            verticalAlignment = Alignment.Top,
+            modifier = Modifier.weight(1f).fillMaxWidth()
+        ) { page ->
+        val tab = tabs[page]
+        fun shows(s: SettingsSection) = s.tab == tab
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp)
+                .padding(top = 16.dp)
+        ) {
+
+        if (shows(SettingsSection.APPEARANCE)) {
+        SettingsSectionHeader(title = "ACCENT COLOR")
 
         Spacer(modifier = Modifier.height(8.dp))
 
@@ -182,13 +213,11 @@ fun SettingsScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(20.dp))
+        }
 
-        // SECTION: PLAYBACK CONTROLS
-        SettingsSectionHeader(title = "PLAYBACK BEHAVIOR")
-
+        if (shows(SettingsSection.PLAYBACK)) {
+        SettingsSectionHeader(title = "PLAYBACK")
         Spacer(modifier = Modifier.height(8.dp))
-
         // Resume on launch
         SettingsToggleRow(
             title = "Resume on App Launch",
@@ -206,7 +235,12 @@ fun SettingsScreen(
             onCheckedChange = { viewModel.setPauseOnHeadphoneDisconnect(it) },
             accentColor = accent
         )
+        }
 
+        if (shows(SettingsSection.PLAYER)) {
+        Spacer(modifier = Modifier.height(20.dp))
+        SettingsSectionHeader(title = "PLAYER & QUEUE")
+        Spacer(modifier = Modifier.height(8.dp))
         // Show remaining time
         SettingsToggleRow(
             title = "Remaining Time Display",
@@ -222,9 +256,16 @@ fun SettingsScreen(
             onCheckedChange = { viewModel.setBadgeOpensSongInfo(it) },
             accentColor = accent
         )
+        SettingsToggleRow(
+            title = "Show Played Songs in Queue",
+            subtitle = "Open the queue with its Played section unfolded, so every song in it is listed. Tap Played to fold it",
+            checked = settings.queueShowPlayed,
+            onCheckedChange = { viewModel.setQueueShowPlayed(it) },
+            accentColor = accent
+        )
+        }
 
-        Spacer(modifier = Modifier.height(4.dp))
-
+        if (shows(SettingsSection.LYRICS)) {
         SettingsToggleRow(
             title = "Online Lyrics",
             subtitle = "Look up lyrics on LRCLIB. Sends only the song's title, artist, album and length; results are saved on the phone",
@@ -243,11 +284,19 @@ fun SettingsScreen(
             accentColor = accent
         )
 
-        Spacer(modifier = Modifier.height(20.dp))
+        Spacer(modifier = Modifier.height(4.dp))
 
-        // SECTION: LIBRARY RE-SCAN
-        SettingsSectionHeader(title = "MEDIA DISCOVERY")
+        SettingsToggleRow(
+            title = "Keep the File's Own Lyrics",
+            subtitle = "Also offer the unsynced lyrics stored in the song file (marked ♫) when LRCLIB has synced ones of the same kind. Off: one song at a time from the player's ⋮ menu",
+            checked = settings.keepFileLyrics,
+            onCheckedChange = { viewModel.setKeepFileLyrics(it) },
+            accentColor = accent
+        )
+        }
 
+        if (shows(SettingsSection.LIBRARY)) {
+        SettingsSectionHeader(title = "MUSIC FOLDERS")
         Spacer(modifier = Modifier.height(8.dp))
 
         Surface(
@@ -334,8 +383,124 @@ fun SettingsScreen(
                 }
             }
         }
+        }
+
+        // The Last.fm / Libre.fm account read on the stats page
+        if (shows(SettingsSection.STATS)) {
+        Spacer(modifier = Modifier.height(20.dp))
+        SettingsSectionHeader(title = "SCROBBLE ACCOUNT")
+        Spacer(modifier = Modifier.height(8.dp))
+        SettingsToggleRow(
+            title = "Show Scrobbles in Stats",
+            subtitle = "Off: Listening stats shows only this phone's plays, without the Last.fm / Libre.fm side. The account below is kept",
+            checked = settings.showScrobbles,
+            onCheckedChange = { viewModel.setShowScrobbles(it) },
+            accentColor = accent
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Surface(
+            shape = RoundedCornerShape(8.dp),
+            color = TerminalRaisedPanel,
+            border = androidx.compose.foundation.BorderStroke(1.dp, TerminalBorder),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(14.dp)) {
+                if (settings.scrobbleUser.isBlank()) {
+                    Text(
+                        text = "Not connected. Open Listening stats › SCROBBLES to see what Pano Scrobbler sends to Last.fm or Libre.fm.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MutedText
+                    )
+                } else {
+                    Text(
+                        text = settings.scrobbleUser,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = PrimaryText
+                    )
+                    Text(
+                        text = "${settings.scrobbleService.label} · read-only. Pano Scrobbler does the scrobbling; Moon Player shows what it sent.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MutedText
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    OutlinedButton(onClick = viewModel::disconnectScrobbles) {
+                        Text("Disconnect", color = MaterialTheme.colorScheme.error)
+                    }
+                    Text(
+                        text = "Deletes the saved online stats from this phone. Your local stats aren't touched.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MutedText
+                    )
+                }
+            }
+        }
+        }
 
         Spacer(modifier = Modifier.height(24.dp))
+        }
+        }
+    }
+}
+
+/** Settings tabs; About is its own screen, in the drawer. */
+internal enum class SettingsTab(val title: String) { PLAYER("Player"), LYRICS("Lyrics"), LOOK("Look"), LIBRARY("Library") }
+
+/** Groups of settings and the tab each sits on, in page order. */
+internal enum class SettingsSection(val tab: SettingsTab) {
+    PLAYBACK(SettingsTab.PLAYER),
+    PLAYER(SettingsTab.PLAYER),
+    LYRICS(SettingsTab.LYRICS),
+    APPEARANCE(SettingsTab.LOOK),
+    LIBRARY(SettingsTab.LIBRARY),
+    STATS(SettingsTab.LIBRARY)
+}
+
+/**
+ * Tabs whose underline follows the pager as it's dragged, sliding and resizing between tab
+ * widths, instead of jumping once the swipe settles.
+ */
+@Composable
+private fun SettingsTabRow(titles: List<String>, pager: PagerState, accent: Color, onSelect: (Int) -> Unit) {
+    TabRow(
+        selectedTabIndex = pager.currentPage,
+        containerColor = TerminalBlack,
+        contentColor = accent,
+        indicator = { positions ->
+            if (positions.isNotEmpty()) {
+                // Read here only, so a drag redraws the underline, not the tabs.
+                val fraction = pager.currentPageOffsetFraction
+                val from = positions[pager.currentPage]
+                val to = positions[(pager.currentPage + if (fraction < 0) -1 else 1).coerceIn(positions.indices)]
+                val t = kotlin.math.abs(fraction)
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .wrapContentSize(Alignment.BottomStart)
+                        .offset(x = lerp(from.left, to.left, t))
+                        .width(lerp(from.width, to.width, t))
+                        .height(2.dp)
+                        .background(accent)
+                )
+            }
+        },
+        divider = { HorizontalDivider(color = TerminalBorder) }
+    ) {
+        titles.forEachIndexed { i, title ->
+            val selected = pager.currentPage == i
+            Tab(
+                selected = selected,
+                onClick = { onSelect(i) },
+                text = {
+                    Text(
+                        title.uppercase(),
+                        fontFamily = FontFamily.Monospace,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (selected) accent else MutedText
+                    )
+                }
+            )
+        }
     }
 }
 
