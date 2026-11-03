@@ -335,6 +335,49 @@ fun SettingsScreen(
             }
         }
 
+        Spacer(modifier = Modifier.height(20.dp))
+
+        // SECTION: the Last.fm / Libre.fm account read on the stats page
+        SettingsSectionHeader(title = "SCROBBLE STATS")
+        Spacer(modifier = Modifier.height(8.dp))
+        Surface(
+            shape = RoundedCornerShape(8.dp),
+            color = TerminalRaisedPanel,
+            border = androidx.compose.foundation.BorderStroke(1.dp, TerminalBorder),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(14.dp)) {
+                if (settings.scrobbleUser.isBlank()) {
+                    Text(
+                        text = "Not connected. Open Listening stats › SCROBBLES to see what Pano Scrobbler sends to Last.fm or Libre.fm.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MutedText
+                    )
+                } else {
+                    Text(
+                        text = settings.scrobbleUser,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = PrimaryText
+                    )
+                    Text(
+                        text = "${settings.scrobbleService.label} · read-only. Pano Scrobbler does the scrobbling; Moon Player shows what it sent.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MutedText
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    OutlinedButton(onClick = viewModel::disconnectScrobbles) {
+                        Text("Disconnect", color = MaterialTheme.colorScheme.error)
+                    }
+                    Text(
+                        text = "Deletes the saved online stats from this phone. Your local stats aren't touched.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MutedText
+                    )
+                }
+            }
+        }
+
         Spacer(modifier = Modifier.height(24.dp))
     }
 }

@@ -103,6 +103,8 @@ jobs:
           KEYSTORE_PATH: ${{ runner.temp }}/upload.jks
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          # Without it the build still works; only the Last.fm stats tab reports a missing key.
+          LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
 
       - name: Prepare release artifacts & checksums
         id: prepare_artifacts

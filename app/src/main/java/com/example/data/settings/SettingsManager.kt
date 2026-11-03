@@ -1,6 +1,7 @@
 package com.example.data.settings
 
 import android.content.Context
+import com.example.data.scrobble.ScrobbleService
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
@@ -47,7 +48,10 @@ data class PlayerSettings(
     // null until the user is asked the first time lyrics open
     val onlineLyrics: Boolean? = null,
     // null = follow the phone's language (romaji unless it reads the song's own script)
-    val preferRomaji: Boolean? = null
+    val preferRomaji: Boolean? = null,
+    // The scrobble account whose stats show on the stats page; a blank user is not connected.
+    val scrobbleService: ScrobbleService = ScrobbleService.LASTFM,
+    val scrobbleUser: String = ""
 )
 
 class SettingsManager(private val context: Context) {
@@ -70,6 +74,8 @@ class SettingsManager(private val context: Context) {
         val KEY_ONBOARDING_COMPLETE = booleanPreferencesKey("onboarding_complete")
         val KEY_ONLINE_LYRICS = booleanPreferencesKey("online_lyrics")
         val KEY_PREFER_ROMAJI = booleanPreferencesKey("prefer_romaji")
+        val KEY_SCROBBLE_SERVICE = stringPreferencesKey("scrobble_service")
+        val KEY_SCROBBLE_USER = stringPreferencesKey("scrobble_user")
     }
 
     val settingsFlow: Flow<PlayerSettings> = context.dataStore.data.map { prefs ->
@@ -98,7 +104,10 @@ class SettingsManager(private val context: Context) {
             libraryFolderUris = prefs[KEY_LIBRARY_FOLDER_URIS] ?: emptySet(),
             onboardingComplete = prefs[KEY_ONBOARDING_COMPLETE] ?: false,
             onlineLyrics = prefs[KEY_ONLINE_LYRICS],
-            preferRomaji = prefs[KEY_PREFER_ROMAJI]
+            preferRomaji = prefs[KEY_PREFER_ROMAJI],
+            scrobbleService = ScrobbleService.entries.firstOrNull { it.name == prefs[KEY_SCROBBLE_SERVICE] }
+                ?: ScrobbleService.LASTFM,
+            scrobbleUser = prefs[KEY_SCROBBLE_USER] ?: ""
         )
     }
 
@@ -173,6 +182,14 @@ class SettingsManager(private val context: Context) {
 
     suspend fun setOnlineLyrics(enabled: Boolean) {
         context.dataStore.edit { it[KEY_ONLINE_LYRICS] = enabled }
+    }
+
+    /** A blank [user] disconnects. */
+    suspend fun setScrobbleAccount(service: ScrobbleService, user: String) {
+        context.dataStore.edit {
+            it[KEY_SCROBBLE_SERVICE] = service.name
+            it[KEY_SCROBBLE_USER] = user.trim()
+        }
     }
 
     suspend fun setPreferRomaji(enabled: Boolean) {

@@ -35,6 +35,10 @@ import com.example.data.stats.StatsKind
 import com.example.data.stats.StatsRange
 import com.example.data.stats.detailStats
 import com.example.data.stats.listeningStats
+import com.example.data.scrobble.ScrobbleException
+import com.example.data.scrobble.ScrobbleRepository
+import com.example.data.scrobble.ScrobbleService
+import com.example.data.scrobble.ScrobbleStats
 import com.example.service.PlaybackService
 import com.example.ui.theme.CelestialCyan
 import com.example.ui.theme.MoonWhite
@@ -311,6 +315,79 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val statsDetail: StateFlow<StatsDetail?> = combine(statsRows, _statsSelection) { (range, rows), selected ->
         selected?.let { (kind, key) -> detailStats(rows, kind, key, range, System.currentTimeMillis()) }
     }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    // SCROBBLE STATS: what Pano Scrobbler sent to Last.fm / Libre.fm, read back from there.
+    private val scrobbleRepository = ScrobbleRepository(application)
+
+    sealed interface ScrobbleUiState {
+        data object NotConnected : ScrobbleUiState
+        data object Loading : ScrobbleUiState
+        /** [refreshing]: the saved copy is showing while a fresh one loads. */
+        data class Loaded(val stats: ScrobbleStats, val refreshing: Boolean = false) : ScrobbleUiState
+        data class Failed(val reason: ScrobbleException.Reason, val message: String?) : ScrobbleUiState
+    }
+
+    /** The stats page shows the scrobble service instead of this phone's history. */
+    private val _statsOnline = MutableStateFlow(false)
+    val statsOnline = _statsOnline.asStateFlow()
+
+    fun setStatsOnline(online: Boolean) {
+        _statsOnline.value = online
+    }
+
+    private val scrobbleReload = MutableStateFlow(0)
+
+    fun refreshScrobbles() {
+        scrobbleReload.value++
+    }
+
+    // Only fetches while the scrobble side is open; the saved copy shows first, then a fresh one.
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val scrobbleState: StateFlow<ScrobbleUiState> = combine(
+        settingsManager.settingsFlow.map { it.scrobbleService to it.scrobbleUser }.distinctUntilChanged(),
+        _statsRange,
+        _statsOnline,
+        scrobbleReload
+    ) { account, range, online, _ -> Triple(account, range, online) }
+        .flatMapLatest { (account, range, online) ->
+            val (service, user) = account
+            kotlinx.coroutines.flow.flow {
+                when {
+                    user.isBlank() -> emit(ScrobbleUiState.NotConnected)
+                    !online -> Unit
+                    else -> {
+                        val saved = scrobbleRepository.cached(service, user, range)
+                        emit(saved?.let { ScrobbleUiState.Loaded(it, refreshing = true) } ?: ScrobbleUiState.Loading)
+                        emit(
+                            try {
+                                ScrobbleUiState.Loaded(scrobbleRepository.fetch(service, user, range))
+                            } catch (e: ScrobbleException) {
+                                if (e.reason == ScrobbleException.Reason.OFFLINE && saved != null) {
+                                    ScrobbleUiState.Loaded(saved.copy(offline = true))
+                                } else {
+                                    ScrobbleUiState.Failed(e.reason, e.message)
+                                }
+                            }
+                        )
+                    }
+                }
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ScrobbleUiState.Loading)
+
+    fun connectScrobbles(service: ScrobbleService, user: String) {
+        if (user.isBlank()) return
+        viewModelScope.launch { settingsManager.setScrobbleAccount(service, user) }
+    }
+
+    /** Forgets the account and its saved stats; this phone's own stats stay. */
+    fun disconnectScrobbles() {
+        viewModelScope.launch {
+            settingsManager.setScrobbleAccount(settings.value.scrobbleService, "")
+            scrobbleRepository.clear()
+        }
+    }
+
     val settings = settingsManager.settingsFlow.stateIn(
         viewModelScope,
         SharingStarted.WhileSubscribed(5000),
