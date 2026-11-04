@@ -25,6 +25,8 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -221,7 +223,7 @@ fun SettingsScreen(
         // Resume on launch
         SettingsToggleRow(
             title = "Resume on App Launch",
-            subtitle = "Reopen at the last song, queue and position, paused. Press Play to continue",
+            subtitle = "Reopen paused at the last song and spot",
             checked = settings.resumeOnLaunch,
             onCheckedChange = { viewModel.setResumeOnLaunch(it) },
             accentColor = accent
@@ -230,7 +232,7 @@ fun SettingsScreen(
         // Pause on unplug
         SettingsToggleRow(
             title = "Pause on Disconnect",
-            subtitle = "Automatically pause playback when headphones are unplugged",
+            subtitle = "Pause when headphones are unplugged",
             checked = settings.pauseOnHeadphoneDisconnect,
             onCheckedChange = { viewModel.setPauseOnHeadphoneDisconnect(it) },
             accentColor = accent
@@ -243,22 +245,22 @@ fun SettingsScreen(
         Spacer(modifier = Modifier.height(8.dp))
         // Show remaining time
         SettingsToggleRow(
-            title = "Remaining Time Display",
-            subtitle = "Show '-MM:SS' time remaining rather than total duration on seek bar",
+            title = "Show Time Left",
+            subtitle = "Show -2:31 instead of the song's length",
             checked = settings.showRemainingTime,
             onCheckedChange = { viewModel.setShowRemainingTime(it) },
             accentColor = accent
         )
         SettingsToggleRow(
-            title = "Tap Format for Song Info",
-            subtitle = "Tapping the format (M4A · 256 KBPS) under the seek bar opens the file, stream and tag details. Also in the player's ⋮ menu",
+            title = "Format Opens Song Info",
+            subtitle = "Tap MP3 · 128 KBPS under the seek bar for file details",
             checked = settings.badgeOpensSongInfo,
             onCheckedChange = { viewModel.setBadgeOpensSongInfo(it) },
             accentColor = accent
         )
         SettingsToggleRow(
             title = "Show Played Songs in Queue",
-            subtitle = "Open the queue with its Played section unfolded, so every song in it is listed. Tap Played to fold it",
+            subtitle = "Open the queue with played songs listed",
             checked = settings.queueShowPlayed,
             onCheckedChange = { viewModel.setQueueShowPlayed(it) },
             accentColor = accent
@@ -266,19 +268,54 @@ fun SettingsScreen(
         }
 
         if (shows(SettingsSection.LYRICS)) {
+        SettingsSectionHeader(title = "WHERE LYRICS COME FROM")
+        Spacer(modifier = Modifier.height(8.dp))
+        LyricsSourceOrder(settings.lyricsSourceOrder, accent) { source, up -> viewModel.moveLyricsSource(source, up) }
+        Text(
+            text = "Tried top to bottom. Change one song's from the line under its lyrics.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MutedText,
+            modifier = Modifier.padding(top = 6.dp, bottom = 12.dp)
+        )
+
         SettingsToggleRow(
-            title = "Online Lyrics",
-            subtitle = "Look up lyrics on LRCLIB. Sends only the song's title, artist, album and length; results are saved on the phone",
-            checked = settings.onlineLyrics == true,
-            onCheckedChange = { viewModel.setOnlineLyrics(it) },
+            title = "Prefer Synced Lyrics",
+            subtitle = "Synced lyrics win over the order",
+            checked = settings.preferSyncedLyrics,
+            onCheckedChange = { viewModel.setPreferSyncedLyrics(it) },
+            accentColor = accent
+        )
+
+        Spacer(modifier = Modifier.height(20.dp))
+        SettingsSectionHeader(title = "LRCLIB (ONLINE)")
+        Spacer(modifier = Modifier.height(8.dp))
+
+        SettingsToggleRow(
+            title = "Use LRCLIB",
+            subtitle = "Look songs up when you tap. Off: nothing goes online",
+            checked = settings.lrclibEnabled,
+            onCheckedChange = { viewModel.setLrclibEnabled(it) },
             accentColor = accent
         )
 
         Spacer(modifier = Modifier.height(4.dp))
 
         SettingsToggleRow(
+            title = "Look Up Lyrics Automatically",
+            subtitle = "Look each song up once, without a tap",
+            checked = settings.lrclibEnabled && settings.onlineLyrics == true,
+            onCheckedChange = { viewModel.setOnlineLyrics(it) },
+            accentColor = accent,
+            enabled = settings.lrclibEnabled
+        )
+
+        Spacer(modifier = Modifier.height(20.dp))
+        SettingsSectionHeader(title = "DISPLAY")
+        Spacer(modifier = Modifier.height(8.dp))
+
+        SettingsToggleRow(
             title = "Prefer Romaji Lyrics",
-            subtitle = "For Japanese and other non-Latin songs, show romaji when it's available. Each song can still be switched in its lyrics",
+            subtitle = "Open non-Latin songs on romaji when there is some",
             checked = viewModel.effectivePreferRomaji(settings),
             onCheckedChange = { viewModel.setPreferRomaji(it) },
             accentColor = accent
@@ -287,10 +324,10 @@ fun SettingsScreen(
         Spacer(modifier = Modifier.height(4.dp))
 
         SettingsToggleRow(
-            title = "Keep the File's Own Lyrics",
-            subtitle = "Also offer the unsynced lyrics stored in the song file (marked ♫) when LRCLIB has synced ones of the same kind. Off: one song at a time from the player's ⋮ menu",
-            checked = settings.keepFileLyrics,
-            onCheckedChange = { viewModel.setKeepFileLyrics(it) },
+            title = "Show Source Over Lyrics",
+            subtitle = "Briefly show it over the lyrics when there's a choice",
+            checked = settings.lyricsSourceChip,
+            onCheckedChange = { viewModel.setLyricsSourceChip(it) },
             accentColor = accent
         )
         }
@@ -347,7 +384,7 @@ fun SettingsScreen(
                 }
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "Only music files (MP3, FLAC, M4A, AAC, OGG, Opus, WAV) in these folders and their subfolders are scanned. Access is kept across restarts while Android keeps the grant.",
+                    text = "Music in these folders and their subfolders.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MutedText
                 )
@@ -392,7 +429,7 @@ fun SettingsScreen(
         Spacer(modifier = Modifier.height(8.dp))
         SettingsToggleRow(
             title = "Show Scrobbles in Stats",
-            subtitle = "Off: Listening stats shows only this phone's plays, without the Last.fm / Libre.fm side. The account below is kept",
+            subtitle = "The Last.fm / Libre.fm side of Listening stats",
             checked = settings.showScrobbles,
             onCheckedChange = { viewModel.setShowScrobbles(it) },
             accentColor = accent
@@ -407,7 +444,7 @@ fun SettingsScreen(
             Column(modifier = Modifier.padding(14.dp)) {
                 if (settings.scrobbleUser.isBlank()) {
                     Text(
-                        text = "Not connected. Open Listening stats › SCROBBLES to see what Pano Scrobbler sends to Last.fm or Libre.fm.",
+                        text = "Not connected. Connect in Listening stats › SCROBBLES.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MutedText
                     )
@@ -419,7 +456,7 @@ fun SettingsScreen(
                         color = PrimaryText
                     )
                     Text(
-                        text = "${settings.scrobbleService.label} · read-only. Pano Scrobbler does the scrobbling; Moon Player shows what it sent.",
+                        text = "${settings.scrobbleService.label} · read-only",
                         style = MaterialTheme.typography.bodySmall,
                         color = MutedText
                     )
@@ -428,7 +465,7 @@ fun SettingsScreen(
                         Text("Disconnect", color = MaterialTheme.colorScheme.error)
                     }
                     Text(
-                        text = "Deletes the saved online stats from this phone. Your local stats aren't touched.",
+                        text = "Removes the saved online stats; your own stay.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MutedText
                     )
@@ -439,6 +476,43 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(24.dp))
         }
+        }
+    }
+}
+
+/** The lyrics sources in the user's order, each with buttons to move it up or down. */
+@Composable
+private fun LyricsSourceOrder(
+    order: List<com.example.data.lyrics.LyricsSource>,
+    accent: Color,
+    onMove: (com.example.data.lyrics.LyricsSource, Boolean) -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = TerminalRaisedPanel,
+        border = androidx.compose.foundation.BorderStroke(1.dp, TerminalBorder),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column {
+            order.forEachIndexed { i, source ->
+                if (i > 0) HorizontalDivider(color = TerminalBorder)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(start = 14.dp, end = 4.dp, top = 4.dp, bottom = 4.dp)
+                ) {
+                    Text("${i + 1}", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, color = accent, modifier = Modifier.width(22.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(source.label, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = PrimaryText)
+                        Text(source.long, style = MaterialTheme.typography.bodySmall, color = MutedText)
+                    }
+                    IconButton(onClick = { onMove(source, true) }, enabled = i > 0) {
+                        Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Move ${source.label} up", tint = if (i > 0) PrimaryText else TerminalBorder)
+                    }
+                    IconButton(onClick = { onMove(source, false) }, enabled = i < order.lastIndex) {
+                        Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Move ${source.label} down", tint = if (i < order.lastIndex) PrimaryText else TerminalBorder)
+                    }
+                }
+            }
         }
     }
 }
@@ -661,7 +735,9 @@ private fun SettingsToggleRow(
     subtitle: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
-    accentColor: Color
+    accentColor: Color,
+    // False greys the row out: a setting that needs another one turned on first.
+    enabled: Boolean = true
 ) {
     Surface(
         shape = RoundedCornerShape(8.dp),
@@ -670,7 +746,7 @@ private fun SettingsToggleRow(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp)
-            .clickable { onCheckedChange(!checked) }
+            .clickable(enabled = enabled) { onCheckedChange(!checked) }
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
@@ -678,12 +754,13 @@ private fun SettingsToggleRow(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-                Text(text = title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = PrimaryText)
+                Text(text = title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = if (enabled) PrimaryText else MutedText)
                 Text(text = subtitle, style = MaterialTheme.typography.bodySmall, color = MutedText)
             }
             Switch(
                 checked = checked,
                 onCheckedChange = onCheckedChange,
+                enabled = enabled,
                 colors = moonSwitchColors(accentColor)
             )
         }

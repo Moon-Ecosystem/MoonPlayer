@@ -4,14 +4,16 @@ import com.example.data.lyrics.LyricLine
 import com.example.data.lyrics.Lyrics
 import com.example.data.lyrics.LyricsKind
 import com.example.data.lyrics.LyricsSource
-import com.example.data.lyrics.LyricsVersion
-import com.example.data.lyrics.chooseVersion
+import com.example.data.lyrics.DEFAULT_LYRICS_SOURCE_ORDER
+import com.example.data.lyrics.LyricsChoice
+import com.example.data.lyrics.autoSource
 import com.example.data.lyrics.encodeChoice
 import com.example.data.lyrics.parseChoice
+import com.example.data.lyrics.parseSourceOrder
 import com.example.data.lyrics.readId3Lyrics
 import com.example.data.lyrics.sortEmbedded
-import com.example.data.lyrics.withoutShadowedPlain
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -106,61 +108,46 @@ class EmbeddedLyricsTest {
         assertEquals(listOf(LyricsKind.ORIGINAL), sortEmbedded(tags, "Can't Help Falling in Love").map { it.first })
     }
 
+    private val synced = Lyrics.Synced(listOf(LyricLine(0, "words")))
+    private val plain = Lyrics.Plain("words")
+
     @Test
-    fun `a plain file version gives way to LRCLIB's synced one of the same kind`() {
-        val plain = Lyrics.Plain("words")
-        val synced = Lyrics.Synced(listOf(LyricLine(0, "words")))
-        val offered = withoutShadowedPlain(
-            linkedMapOf(
-                LyricsVersion(LyricsKind.ORIGINAL, LyricsSource.EMBEDDED) to plain,
-                LyricsVersion(LyricsKind.ROMAJI, LyricsSource.EMBEDDED) to plain,
-                LyricsVersion(LyricsKind.ORIGINAL, LyricsSource.LRCLIB) to synced,
-                LyricsVersion(LyricsKind.ROMAJI, LyricsSource.LRCLIB) to plain
-            )
-        )
-        // Romaji stays twice: LRCLIB's is plain too, so neither is better.
+    fun `the automatic pick is synced first when preferred, then the user's order`() {
+        val order = DEFAULT_LYRICS_SOURCE_ORDER // .lrc, LRCLIB, the song file: 0.1's order
+        // A plain .lrc gives way to a synced LRCLIB version...
+        val both = mapOf(LyricsSource.LRC_FILE to plain, LyricsSource.LRCLIB to synced, LyricsSource.EMBEDDED to plain)
+        assertEquals(LyricsSource.LRCLIB, autoSource(both, order, preferSynced = true))
+        // ...unless synced isn't preferred: then the order wins, synced or not.
+        assertEquals(LyricsSource.LRC_FILE, autoSource(both, order, preferSynced = false))
+        // All plain, or all synced: the order decides.
+        assertEquals(LyricsSource.LRCLIB, autoSource(mapOf(LyricsSource.EMBEDDED to plain, LyricsSource.LRCLIB to plain), order, true))
         assertEquals(
-            listOf(
-                LyricsVersion(LyricsKind.ORIGINAL, LyricsSource.LRCLIB),
-                LyricsVersion(LyricsKind.ROMAJI, LyricsSource.EMBEDDED),
-                LyricsVersion(LyricsKind.ROMAJI, LyricsSource.LRCLIB)
-            ),
-            offered.keys.toList()
+            LyricsSource.EMBEDDED,
+            autoSource(mapOf(LyricsSource.EMBEDDED to synced, LyricsSource.LRCLIB to synced), listOf(LyricsSource.EMBEDDED, LyricsSource.LRCLIB), true)
         )
+        assertNull(autoSource(emptyMap(), order, true))
     }
 
     @Test
-    fun `with the setting on, the file's plain version stays beside LRCLIB's`() {
-        val offered = withoutShadowedPlain(
-            linkedMapOf(
-                LyricsVersion(LyricsKind.ORIGINAL, LyricsSource.LRCLIB) to Lyrics.Synced(listOf(LyricLine(0, "words"))),
-                LyricsVersion(LyricsKind.ORIGINAL, LyricsSource.EMBEDDED) to Lyrics.Plain("words")
-            ),
-            keepAll = true
-        )
-        assertEquals(
-            listOf(LyricsVersion(LyricsKind.ORIGINAL, LyricsSource.EMBEDDED), LyricsVersion(LyricsKind.ORIGINAL, LyricsSource.LRCLIB)),
-            offered.keys.toList()
-        )
+    fun `a song's choices round-trip, and what 0_2 saved still reads`() {
+        val c = LyricsChoice(LyricsKind.ROMAJI, mapOf(LyricsKind.ORIGINAL to LyricsSource.LRC_FILE, LyricsKind.ROMAJI to LyricsSource.EMBEDDED))
+        assertEquals(c, parseChoice(encodeChoice(c)))
+        assertEquals(LyricsChoice(), parseChoice(encodeChoice(LyricsChoice())))
+        // 0.2 saved "ROMAJI" (an LRCLIB version) or "EMBEDDED:ROMAJI" (one from the file).
+        assertEquals(LyricsChoice(LyricsKind.ROMAJI), parseChoice("ROMAJI"))
+        assertEquals(LyricsChoice(LyricsKind.ROMAJI, mapOf(LyricsKind.ROMAJI to LyricsSource.EMBEDDED)), parseChoice("EMBEDDED:ROMAJI"))
+        assertEquals(LyricsChoice(), parseChoice("NONSENSE"))
+        assertEquals(LyricsChoice(), parseChoice(null))
     }
 
     @Test
-    fun `the file's version is shown first, a picked one sticks, and choices round-trip`() {
-        val fileOriginal = LyricsVersion(LyricsKind.ORIGINAL, LyricsSource.EMBEDDED)
-        val lrclibOriginal = LyricsVersion(LyricsKind.ORIGINAL, LyricsSource.LRCLIB)
-        val lrclibRomaji = LyricsVersion(LyricsKind.ROMAJI, LyricsSource.LRCLIB)
-        val available = listOf(fileOriginal, lrclibOriginal, lrclibRomaji)
-
-        assertEquals(fileOriginal, chooseVersion(available, chosen = null, preferRomaji = false))
-        assertEquals(lrclibRomaji, chooseVersion(available, chosen = null, preferRomaji = true))
-        assertEquals(lrclibOriginal, chooseVersion(available, chosen = lrclibOriginal, preferRomaji = false))
-        // A picked file romaji that's gone still means "romaji".
-        assertEquals(lrclibRomaji, chooseVersion(available, LyricsVersion(LyricsKind.ROMAJI, LyricsSource.EMBEDDED), false))
-        assertNull(chooseVersion(emptyList(), null, false))
-
-        available.forEach { assertEquals(it, parseChoice(encodeChoice(it))) }
-        // What older versions saved: the kind alone, from LRCLIB.
-        assertEquals(lrclibRomaji, parseChoice("ROMAJI"))
-        assertNull(parseChoice("NONSENSE"))
+    fun `the source order reads back, filling in anything missing`() {
+        assertEquals(DEFAULT_LYRICS_SOURCE_ORDER, parseSourceOrder(null))
+        assertEquals(
+            listOf(LyricsSource.EMBEDDED, LyricsSource.LRC_FILE, LyricsSource.LRCLIB),
+            parseSourceOrder("EMBEDDED,LRC_FILE,LRCLIB")
+        )
+        // An unknown or missing name is dropped and the rest follow in the default order.
+        assertEquals(listOf(LyricsSource.LRCLIB, LyricsSource.LRC_FILE, LyricsSource.EMBEDDED), parseSourceOrder("LRCLIB,BOGUS"))
     }
 }

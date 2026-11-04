@@ -394,8 +394,8 @@ private fun OverviewTab(
     }
     Spacer(modifier = Modifier.height(10.dp))
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        StatMetricCard(Icons.Default.MusicNote, "LIBRARY", "$libraryCount Tracks", accent, Modifier.weight(1f))
-        StatMetricCard(Icons.Default.Favorite, "FAVORITES", "$favoriteCount Songs", accent, Modifier.weight(1f))
+        StatMetricCard(Icons.Default.MusicNote, "LIBRARY", "$libraryCount ${if (libraryCount == 1) "Track" else "Tracks"}", accent, Modifier.weight(1f))
+        StatMetricCard(Icons.Default.Favorite, "FAVORITES", "$favoriteCount ${if (favoriteCount == 1) "Song" else "Songs"}", accent, Modifier.weight(1f))
     }
     Spacer(modifier = Modifier.height(24.dp))
 
