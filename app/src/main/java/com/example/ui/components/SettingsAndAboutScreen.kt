@@ -265,6 +265,13 @@ fun SettingsScreen(
             onCheckedChange = { viewModel.setQueueShowPlayed(it) },
             accentColor = accent
         )
+        SettingsToggleRow(
+            title = "Shuffle All Songs",
+            subtitle = "Shuffle played songs too; long press does the other",
+            checked = settings.shuffleAll,
+            onCheckedChange = { viewModel.setShuffleAll(it) },
+            accentColor = accent
+        )
         }
 
         if (shows(SettingsSection.LYRICS)) {

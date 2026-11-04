@@ -622,6 +622,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { settingsManager.setQueueShowPlayed(enabled) }
     }
 
+    fun setShuffleAll(enabled: Boolean) {
+        viewModelScope.launch { settingsManager.setShuffleAll(enabled) }
+    }
+
     /** The romaji preference in effect: the user's setting, else the phone's language. */
     fun effectivePreferRomaji(settings: PlayerSettings): Boolean =
         settings.preferRomaji ?: prefersLatinLyrics(java.util.Locale.getDefault().language)
@@ -1041,7 +1045,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun toggleShuffle() {
-        playbackService?.toggleShuffle()
+        playbackService?.toggleShuffle(all = settings.value.shuffleAll)
+    }
+
+    /** Long press on shuffle: the other way from what a tap does under Shuffle All Songs. */
+    fun reshuffleOtherWay() {
+        playbackService?.reshuffle(all = !settings.value.shuffleAll)
     }
 
     fun setPlaybackSpeed(speed: Float) {
