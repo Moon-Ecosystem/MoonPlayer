@@ -116,7 +116,6 @@ fun LyricsPanel(viewModel: MainViewModel, modifier: Modifier = Modifier) {
     ) {
         when (val s = state) {
             LyricsUiState.Loading -> CircularProgressIndicator(color = accent, modifier = Modifier.align(Alignment.Center))
-            LyricsUiState.AskOnline -> AskOnline(viewModel, Modifier.align(Alignment.Center))
             is LyricsUiState.Done -> when (val lookup = s.lookup) {
                 is LyricsLookup.Found -> {
                     // Pills are what you read: one per kind, only when there's more than one (or
@@ -161,17 +160,24 @@ fun LyricsPanel(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                             modifier = Modifier.align(Alignment.TopStart).padding(start = 12.dp, top = 4.dp)
                         )
                     }
-                    if (sheetOpen) LyricsSourceSheet(viewModel, lookup) { sheetOpen = false }
+                    if (sheetOpen) LyricsSourceSheet(viewModel, lookup, canLookUp = s.lrclibAllowed) { sheetOpen = false }
                 }
                 LyricsLookup.NotFound -> LyricsMessage(
                     title = "No lyrics found",
-                    detail = if (s.onlineEnabled) {
-                        "Add a .lrc file with the same name next to the song to use your own."
-                    } else {
-                        "Online lookup is off. Turn it on, or add a .lrc file with the same name next to the song."
+                    detail = when {
+                        s.onlineEnabled -> "Add a .lrc file with the same name next to the song to use your own."
+                        s.lrclibAllowed -> "Look this song up on LRCLIB (sends its title, artist, album and length), or add a .lrc file " +
+                            "with the same name next to it. Settings › Lyrics can look every song up automatically."
+                        else -> "Add a .lrc file with the same name next to the song. LRCLIB is off in Settings › Lyrics."
                     },
-                    actionLabel = if (s.onlineEnabled) "Try again" else "Look up online",
-                    onAction = { if (s.onlineEnabled) viewModel.retryLyrics() else viewModel.answerOnlineLyrics(true) },
+                    // LRCLIB turned off: no button, nothing goes online.
+                    actionLabel = when {
+                        s.onlineEnabled -> "Try again"
+                        s.lrclibAllowed -> "Look up on LRCLIB"
+                        else -> null
+                    },
+                    // With automatic lookup off, this asks for this song only; the setting stays off.
+                    onAction = { if (s.onlineEnabled) viewModel.retryLyrics() else viewModel.lookUpLrclib() },
                     modifier = Modifier.align(Alignment.Center)
                 )
                 is LyricsLookup.Unavailable -> LyricsMessage(
@@ -182,7 +188,7 @@ fun LyricsPanel(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                         "Check your connection and try again."
                     },
                     actionLabel = "Try again",
-                    onAction = { viewModel.retryLyrics() },
+                    onAction = { if (s.onlineEnabled) viewModel.retryLyrics() else viewModel.lookUpLrclib() },
                     modifier = Modifier.align(Alignment.Center)
                 )
             }
@@ -333,7 +339,7 @@ private fun SourceChip(line: String, onClick: () -> Unit) {
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun LyricsSourceSheet(viewModel: MainViewModel, f: LyricsLookup.Found, onDismiss: () -> Unit) {
+private fun LyricsSourceSheet(viewModel: MainViewModel, f: LyricsLookup.Found, canLookUp: Boolean, onDismiss: () -> Unit) {
     val accent = LocalAccentColor.current
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -371,7 +377,8 @@ private fun LyricsSourceSheet(viewModel: MainViewModel, f: LyricsLookup.Found, o
                             onDismiss()
                         }
                     }
-                    if (!f.lrclibAsked) {
+                    // Not when LRCLIB is turned off in Settings: then nothing goes online.
+                    if (!f.lrclibAsked && canLookUp) {
                         HorizontalDivider(color = TerminalBorder)
                         SourceRow(
                             "Look up on LRCLIB",
@@ -423,28 +430,6 @@ private fun SourceRow(title: String, sub: String, tag: String?, selected: Boolea
     }
 }
 
-@Composable
-private fun AskOnline(viewModel: MainViewModel, modifier: Modifier) {
-    val accent = LocalAccentColor.current
-    Column(modifier = modifier.padding(20.dp)) {
-        Text("Look up lyrics online?", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = PrimaryText)
-        Spacer(modifier = Modifier.height(6.dp))
-        Text(
-            text = "Lyrics come from LRCLIB, a free lyrics library. Each lookup sends only the song's " +
-                "title, artist, album and length; results are saved on your phone. Change this any time in Settings.",
-            style = MaterialTheme.typography.bodySmall,
-            color = SecondaryText
-        )
-        Spacer(modifier = Modifier.height(14.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(
-                onClick = { viewModel.answerOnlineLyrics(true) },
-                colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = buttonContentColorFor(accent))
-            ) { Text("Use online lyrics") }
-            OutlinedButton(onClick = { viewModel.answerOnlineLyrics(false) }) { Text("Not now", color = PrimaryText) }
-        }
-    }
-}
 
 /** Small pills to switch between the kinds a song has (Original / Romaji / Translation); the shown one is filled. */
 @Composable
@@ -477,7 +462,7 @@ private fun LyricsKindSwitch(
 }
 
 @Composable
-private fun LyricsMessage(title: String, detail: String, actionLabel: String, onAction: () -> Unit, modifier: Modifier) {
+private fun LyricsMessage(title: String, detail: String, actionLabel: String?, onAction: () -> Unit, modifier: Modifier) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = modifier.padding(24.dp)
@@ -485,7 +470,9 @@ private fun LyricsMessage(title: String, detail: String, actionLabel: String, on
         Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = PrimaryText)
         Spacer(modifier = Modifier.height(6.dp))
         Text(detail, style = MaterialTheme.typography.bodySmall, color = MutedText, textAlign = TextAlign.Center)
-        Spacer(modifier = Modifier.height(14.dp))
-        OutlinedButton(onClick = onAction) { Text(actionLabel, color = PrimaryText) }
+        if (actionLabel != null) {
+            Spacer(modifier = Modifier.height(14.dp))
+            OutlinedButton(onClick = onAction) { Text(actionLabel, color = PrimaryText) }
+        }
     }
 }

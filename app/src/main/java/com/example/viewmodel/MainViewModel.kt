@@ -160,9 +160,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     sealed interface LyricsUiState {
         data object Loading : LyricsUiState
-        /** First open with no local lyrics: ask before anything goes online. */
-        data object AskOnline : LyricsUiState
-        data class Done(val lookup: LyricsLookup, val onlineEnabled: Boolean) : LyricsUiState
+        /** [onlineEnabled]: automatic LRCLIB lookup is on; [lrclibAllowed]: a lookup may be asked for. */
+        data class Done(val lookup: LyricsLookup, val onlineEnabled: Boolean, val lrclibAllowed: Boolean = true) : LyricsUiState
     }
 
     private val _lyricsOpen = MutableStateFlow(false)
@@ -400,10 +399,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         .map<PlayerSettings, Boolean?> { it.onboardingComplete }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
-    fun completeOnboarding() {
-        viewModelScope.launch { settingsManager.setOnboardingComplete() }
-    }
-
 
     // Filtered & Sorted Tracks
     val filteredTracks: StateFlow<List<Track>> = combine(
@@ -552,16 +547,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _lyricsOpen.value = false
     }
 
-    /** Answer to the one-time "look up lyrics online?" question. */
-    fun answerOnlineLyrics(allow: Boolean) {
-        viewModelScope.launch {
-            settingsManager.setOnlineLyrics(allow)
-            loadLyrics(online = allow)
-        }
-    }
-
     fun setOnlineLyrics(enabled: Boolean) {
         viewModelScope.launch { settingsManager.setOnlineLyrics(enabled) }
+    }
+
+    fun setLrclibEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsManager.setLrclibEnabled(enabled) }
+    }
+
+    /** First start's lyrics step, then setup is done. */
+    fun finishOnboarding(lrclibEnabled: Boolean, automatic: Boolean) {
+        viewModelScope.launch {
+            settingsManager.setLrclibMode(lrclibEnabled, automatic)
+            settingsManager.setOnboardingComplete()
+        }
     }
 
     /** Drops a saved "no lyrics" (or wrong) result and looks the song up again. */
@@ -631,28 +630,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * The source sheet's "Look up on LRCLIB": asks LRCLIB for this song although its own lyrics
      * made the automatic lookup skip it, online setting or not. Only this song, only this once.
      */
-    fun lookUpLrclib() = loadLyrics(showSpinner = false, forceLrclib = true)
+    fun lookUpLrclib() = loadLyrics(forceLrclib = true)
 
-    private fun loadLyrics(online: Boolean? = null, showSpinner: Boolean = true, forceLrclib: Boolean = false) {
+    private fun loadLyrics(showSpinner: Boolean = true, forceLrclib: Boolean = false) {
         val track = _currentTrack.value ?: return
         lyricsJob?.cancel()
         lyricsJob = viewModelScope.launch {
             if (showSpinner) _lyricsState.value = LyricsUiState.Loading
             val saved = settingsManager.settingsFlow.first()
-            val allowed = online ?: saved.onlineLyrics
+            // LRCLIB only when allowed at all; automatically only once the user turned that on
+            // (never chosen, null, counts as off).
+            val allowed = saved.lrclibEnabled
+            val automatic = allowed && saved.onlineLyrics == true
             val lookup = lyricsRepository.find(
                 track,
-                online = allowed == true,
+                online = automatic,
                 preferRomaji = effectivePreferRomaji(saved),
                 order = saved.lyricsSourceOrder,
                 preferSynced = saved.preferSyncedLyrics,
-                forceLrclib = forceLrclib
+                forceLrclib = forceLrclib && allowed
             )
-            _lyricsState.value = if (allowed == null && lookup !is LyricsLookup.Found) {
-                LyricsUiState.AskOnline
-            } else {
-                LyricsUiState.Done(lookup, onlineEnabled = allowed == true)
-            }
+            _lyricsState.value = LyricsUiState.Done(lookup, onlineEnabled = automatic, lrclibAllowed = allowed)
         }
     }
 
@@ -1264,7 +1262,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 "LYRICS",
                 lyricsRepository.describe(
                     track,
-                    onlineLyrics = s.onlineLyrics,
+                    onlineLyrics = s.onlineLyrics.takeIf { s.lrclibEnabled },
+                    lrclibEnabled = s.lrclibEnabled,
                     preferRomaji = effectivePreferRomaji(s),
                     order = s.lyricsSourceOrder,
                     preferSynced = s.preferSyncedLyrics

@@ -7,6 +7,12 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RadioButtonDefaults
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
@@ -41,10 +47,17 @@ import com.example.ui.theme.TerminalSurfaceElevated
 import com.example.ui.theme.buttonContentColorFor
 import com.example.viewmodel.MainViewModel
 
+/** The first-start choice about LRCLIB: never, only on a tap, or every song automatically. */
+private enum class LyricsLookupChoice(val title: String, val detail: String) {
+    OFF("Off", "Lyrics only from your files. Nothing goes online"),
+    ON_REQUEST("Only when I ask", "Tap Look up on LRCLIB under a song's lyrics"),
+    AUTOMATIC("Automatically", "Each song is looked up once, the first time its lyrics open")
+}
+
 /**
- * First-run setup: asks for notification access (Android 13+), then lets the user add one or
- * more music folders. Shown until finished or skipped; the result is persisted, so relaunching
- * the app never brings it back.
+ * First-run setup: asks for notification access (Android 13+), lets the user add one or more
+ * music folders, then asks whether lyrics may come from LRCLIB. Shown until finished; the result
+ * is persisted, so relaunching the app never brings it back.
  */
 @Composable
 fun OnboardingDialog(viewModel: MainViewModel) {
@@ -57,6 +70,63 @@ fun OnboardingDialog(viewModel: MainViewModel) {
         ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
         PackageManager.PERMISSION_GRANTED
     var onFolderStep by rememberSaveable { mutableStateOf(!needsNotificationStep) }
+    var onLyricsStep by rememberSaveable { mutableStateOf(false) }
+    var lyricsChoice by rememberSaveable { mutableStateOf(LyricsLookupChoice.ON_REQUEST) }
+
+    if (onLyricsStep) {
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("Lyrics from LRCLIB?", color = PrimaryText, style = MaterialTheme.typography.titleMedium) },
+            text = {
+                Column {
+                    Text(
+                        "Moon Player shows lyrics from .lrc files and from your songs' own tags. LRCLIB, a free online lyrics " +
+                            "library, can add synced lyrics, romaji and translations. A lookup sends only the song's title, " +
+                            "artist, album and length. You can change this later in Settings › Lyrics.",
+                        color = SecondaryText,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    LyricsLookupChoice.entries.forEach { choice ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .selectable(selected = lyricsChoice == choice, role = Role.RadioButton) { lyricsChoice = choice }
+                                .padding(vertical = 6.dp)
+                        ) {
+                            RadioButton(
+                                selected = lyricsChoice == choice,
+                                onClick = null,
+                                colors = RadioButtonDefaults.colors(selectedColor = accent, unselectedColor = MutedText)
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column {
+                                Text(choice.title, color = PrimaryText, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                                Text(choice.detail, color = MutedText, style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.finishOnboarding(
+                            lrclibEnabled = lyricsChoice != LyricsLookupChoice.OFF,
+                            automatic = lyricsChoice == LyricsLookupChoice.AUTOMATIC
+                        )
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = buttonContentColorFor(accent))
+                ) { Text("Done", fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { onLyricsStep = false }) { Text("Back", color = MutedText) }
+            },
+            containerColor = TerminalSurfaceElevated
+        )
+        return
+    }
 
     // Granted or denied, move on; the media notification still works without it on Android 13+.
     val notificationLauncher = rememberLauncherForActivityResult(
@@ -128,8 +198,8 @@ fun OnboardingDialog(viewModel: MainViewModel) {
         },
         confirmButton = {
             if (onFolderStep) {
-                Button(onClick = { viewModel.completeOnboarding() }, colors = primaryColors) {
-                    Text(if (libraryFolders.isEmpty()) "Skip" else "Done", fontWeight = FontWeight.Bold)
+                Button(onClick = { onLyricsStep = true }, colors = primaryColors) {
+                    Text(if (libraryFolders.isEmpty()) "Skip" else "Next", fontWeight = FontWeight.Bold)
                 }
             } else {
                 Button(

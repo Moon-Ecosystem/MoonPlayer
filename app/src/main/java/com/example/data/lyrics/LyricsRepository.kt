@@ -153,6 +153,7 @@ class LyricsRepository(private val context: Context, private val dao: LyricsDao)
     suspend fun describe(
         track: Track,
         onlineLyrics: Boolean?,
+        lrclibEnabled: Boolean,
         preferRomaji: Boolean,
         order: List<LyricsSource>,
         preferSynced: Boolean
@@ -169,7 +170,8 @@ class LyricsRepository(private val context: Context, private val dao: LyricsDao)
             "LRCLIB" to when {
                 saved != null -> lrclibVersions(saved).takeIf { it.isNotEmpty() }
                     ?.entries?.joinToString(", ") { (kind, l) -> "${kind.label} (${sync(l)})" } ?: "Has none"
-                onlineLyrics != true -> "Not looked up · online lyrics off"
+                !lrclibEnabled -> "Off in Settings"
+                onlineLyrics != true -> "Not looked up · automatic lookup off"
                 else -> "Not looked up yet"
             },
             "In use" to (lookup?.let {

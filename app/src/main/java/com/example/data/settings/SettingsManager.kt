@@ -50,7 +50,9 @@ data class PlayerSettings(
     val bassBoostStrength: Int = 300,
     val libraryFolderUris: Set<String> = emptySet(),
     val onboardingComplete: Boolean = false,
-    // null until the user is asked the first time lyrics open
+    // Whether Moon Player may contact LRCLIB at all (Look up on LRCLIB); off keeps lyrics offline.
+    val lrclibEnabled: Boolean = true,
+    // Look every song up on LRCLIB automatically (needs lrclibEnabled); null = never chosen, counts as off.
     val onlineLyrics: Boolean? = null,
     // null = follow the phone's language (romaji unless it reads the song's own script)
     val preferRomaji: Boolean? = null,
@@ -86,6 +88,7 @@ class SettingsManager(private val context: Context) {
         val KEY_LIBRARY_FOLDER_URIS = stringSetPreferencesKey("library_folder_uris")
         val KEY_ONBOARDING_COMPLETE = booleanPreferencesKey("onboarding_complete")
         val KEY_ONLINE_LYRICS = booleanPreferencesKey("online_lyrics")
+        val KEY_LRCLIB_ENABLED = booleanPreferencesKey("lrclib_enabled")
         val KEY_PREFER_ROMAJI = booleanPreferencesKey("prefer_romaji")
         val KEY_LYRICS_SOURCE_ORDER = stringPreferencesKey("lyrics_source_order")
         val KEY_PREFER_SYNCED_LYRICS = booleanPreferencesKey("prefer_synced_lyrics")
@@ -121,6 +124,7 @@ class SettingsManager(private val context: Context) {
             bassBoostStrength = prefs[KEY_BASS_BOOST] ?: 300,
             libraryFolderUris = prefs[KEY_LIBRARY_FOLDER_URIS] ?: emptySet(),
             onboardingComplete = prefs[KEY_ONBOARDING_COMPLETE] ?: false,
+            lrclibEnabled = prefs[KEY_LRCLIB_ENABLED] ?: true,
             onlineLyrics = prefs[KEY_ONLINE_LYRICS],
             preferRomaji = prefs[KEY_PREFER_ROMAJI],
             lyricsSourceOrder = parseSourceOrder(prefs[KEY_LYRICS_SOURCE_ORDER]),
@@ -237,6 +241,18 @@ class SettingsManager(private val context: Context) {
 
     suspend fun setPreferSyncedLyrics(enabled: Boolean) {
         context.dataStore.edit { it[KEY_PREFER_SYNCED_LYRICS] = enabled }
+    }
+
+    suspend fun setLrclibEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[KEY_LRCLIB_ENABLED] = enabled }
+    }
+
+    /** The first-start lyrics question: LRCLIB off, only when asked, or automatically. */
+    suspend fun setLrclibMode(enabled: Boolean, automatic: Boolean) {
+        context.dataStore.edit {
+            it[KEY_LRCLIB_ENABLED] = enabled
+            it[KEY_ONLINE_LYRICS] = enabled && automatic
+        }
     }
 
     suspend fun setOnboardingComplete() {
