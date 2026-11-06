@@ -46,6 +46,14 @@ class QueueKeysTest {
         assertEquals((4..9).toSet(), a.drop(4).toSet())
         assertEquals(a.take(4), b.take(4))
         assertNotEquals(a, b) // a different seed, a different shuffle
+        // On the last song the others come after it, reshuffled, instead of nothing changing.
+        val last = freshShuffleOrder(5, current = 4, random = kotlin.random.Random(3)).toList()
+        assertEquals(4, last.first())
+        assertEquals((0..3).toSet(), last.drop(1).toSet())
+        // Shuffle All Songs: mid-queue, the played songs join the reshuffle after the current one.
+        val all = freshShuffleOrder(10, current = 3, random = kotlin.random.Random(1), all = true).toList()
+        assertEquals(3, all.first())
+        assertEquals((0..9).toSet() - 3, all.drop(1).toSet())
         // Nothing playing yet counts as the first song; one song is just itself.
         assertEquals(0, freshShuffleOrder(5, current = -1).first())
         assertEquals(listOf(0), freshShuffleOrder(1, current = 0).toList())

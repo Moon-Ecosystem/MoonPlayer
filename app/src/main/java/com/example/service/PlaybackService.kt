@@ -49,10 +49,15 @@ internal fun shuffleOrderWithInsert(order: List<Int>, inserted: Int, after: Int?
 
 /**
  * A new play order for turning shuffle on: the songs before [current] stay played (in list
- * order), [current] keeps playing, and every song after it is shuffled afresh.
+ * order), [current] keeps playing, and every song after it is shuffled afresh. On the last song
+ * nothing is left to shuffle, so all the others come after it in a new order: a fresh pass.
  */
-internal fun freshShuffleOrder(count: Int, current: Int, random: kotlin.random.Random = kotlin.random.Random.Default): IntArray {
+internal fun freshShuffleOrder(count: Int, current: Int, random: kotlin.random.Random = kotlin.random.Random.Default, all: Boolean = false): IntArray {
     val now = current.coerceIn(0, (count - 1).coerceAtLeast(0))
+    // [all] (Settings › Shuffle All Songs): played songs are shuffled back in after the current one too.
+    if (count > 1 && (all || now == count - 1)) {
+        return (listOf(now) + (0 until count).filter { it != now }.shuffled(random)).toIntArray()
+    }
     return ((0 until now) + now + (now + 1 until count).shuffled(random)).take(count).toIntArray()
 }
 
@@ -503,16 +508,27 @@ class PlaybackService : MediaSessionService() {
     }
 
     @OptIn(UnstableApi::class)
-    fun toggleShuffle() {
+    fun toggleShuffle(all: Boolean = false) {
         val newShuffle = !player.shuffleModeEnabled
         // Media3 keeps the order it made when the queue was loaded, so without this every
         // off-then-on would bring back the same shuffle.
         if (newShuffle && player.mediaItemCount > 1) {
-            val order = freshShuffleOrder(player.mediaItemCount, player.currentMediaItemIndex)
+            val order = freshShuffleOrder(player.mediaItemCount, player.currentMediaItemIndex, all = all)
             player.setShuffleOrder(DefaultShuffleOrder(order, System.nanoTime()))
         }
         player.shuffleModeEnabled = newShuffle
         _isShuffleMode.value = newShuffle
+    }
+
+    /** Shuffle on (or a fresh shuffle if it already is); [all] reshuffles played songs in too. */
+    @OptIn(UnstableApi::class)
+    fun reshuffle(all: Boolean) {
+        if (player.mediaItemCount > 1) {
+            val order = freshShuffleOrder(player.mediaItemCount, player.currentMediaItemIndex, all = all)
+            player.setShuffleOrder(DefaultShuffleOrder(order, System.nanoTime()))
+        }
+        player.shuffleModeEnabled = true
+        _isShuffleMode.value = true
     }
 
     fun setPlaybackSpeed(speed: Float) {

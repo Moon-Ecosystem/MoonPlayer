@@ -6,6 +6,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -460,19 +461,7 @@ fun MainPlayerScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                IconButton(
-                    onClick = { viewModel.toggleShuffle() },
-                    modifier = Modifier
-                        .testTag("shuffle_button")
-                        .minimumInteractiveComponentSize()
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Shuffle,
-                        contentDescription = if (isShuffle) "Shuffle on" else "Shuffle off",
-                        tint = if (isShuffle) accent else MutedText,
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
+                ShuffleButton(viewModel, isShuffle, accent, iconSize = 24.dp, modifier = Modifier.testTag("shuffle_button"))
 
                 // Previous
                 IconButton(
@@ -936,6 +925,53 @@ private fun NothingPlayingPrompt(viewModel: MainViewModel) {
                     Text("All Songs", color = PrimaryText)
                 }
             }
+        }
+    }
+}
+
+/**
+ * Shuffle for the player and the queue: tap toggles it. Long press offers "Shuffle all songs"
+ * (played ones included) in a menu, so a press held by accident doesn't reshuffle the queue.
+ */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+internal fun ShuffleButton(viewModel: MainViewModel, isShuffle: Boolean, accent: Color, iconSize: androidx.compose.ui.unit.Dp, modifier: Modifier = Modifier) {
+    val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
+    var menuOpen by remember { mutableStateOf(false) }
+    // The menu offers whichever shuffle a tap doesn't do, per Settings › Shuffle All Songs.
+    val settings by viewModel.settings.collectAsState()
+    val otherWay = if (settings.shuffleAll) "Shuffle songs after this" else "Shuffle all songs"
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = modifier
+            .size(48.dp)
+            .clip(CircleShape)
+            .combinedClickable(
+                role = androidx.compose.ui.semantics.Role.Button,
+                onClickLabel = if (isShuffle) "Turn shuffle off" else "Turn shuffle on",
+                onLongClickLabel = otherWay,
+                onLongClick = {
+                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                    menuOpen = true
+                },
+                onClick = { viewModel.toggleShuffle() }
+            )
+    ) {
+        Icon(
+            imageVector = Icons.Default.Shuffle,
+            contentDescription = if (isShuffle) "Shuffle on" else "Shuffle off",
+            tint = if (isShuffle) accent else MutedText,
+            modifier = Modifier.size(iconSize)
+        )
+        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+            DropdownMenuItem(
+                text = { Text(otherWay) },
+                leadingIcon = { Icon(Icons.Default.Shuffle, contentDescription = null) },
+                onClick = {
+                    menuOpen = false
+                    viewModel.reshuffleOtherWay()
+                }
+            )
         }
     }
 }

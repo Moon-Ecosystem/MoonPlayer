@@ -364,17 +364,7 @@ fun PlaylistQueueScreen(
                     modifier = Modifier.size(22.dp)
                 )
             }
-            IconButton(
-                onClick = { viewModel.toggleShuffle() },
-                modifier = Modifier.testTag("queue_shuffle_button")
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Shuffle,
-                    contentDescription = if (isShuffle) "Shuffle on" else "Shuffle off",
-                    tint = if (isShuffle) accent else MutedText,
-                    modifier = Modifier.size(22.dp)
-                )
-            }
+            ShuffleButton(viewModel, isShuffle, accent, iconSize = 22.dp, modifier = Modifier.testTag("queue_shuffle_button"))
             IconButton(
                 onClick = {
                     viewModel.saveQueueAsPlaylist()

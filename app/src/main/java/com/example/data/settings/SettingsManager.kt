@@ -40,6 +40,8 @@ data class PlayerSettings(
     val badgeOpensSongInfo: Boolean = true,
     // The queue opens with its Played section unfolded.
     val queueShowPlayed: Boolean = false,
+    // Turning shuffle on reshuffles played songs too, not just what's still to come.
+    val shuffleAll: Boolean = false,
     val lastTrackUri: String = "",
     val lastPositionMs: Long = 0L,
     val repeatMode: Int = 0, // 0 = off, 1 = one, 2 = all
@@ -94,6 +96,7 @@ class SettingsManager(private val context: Context) {
         val KEY_PREFER_SYNCED_LYRICS = booleanPreferencesKey("prefer_synced_lyrics")
         val KEY_LYRICS_SOURCE_CHIP = booleanPreferencesKey("lyrics_source_chip")
         val KEY_QUEUE_SHOW_PLAYED = booleanPreferencesKey("queue_show_played")
+        val KEY_SHUFFLE_ALL = booleanPreferencesKey("shuffle_all")
         val KEY_SCROBBLE_SERVICE = stringPreferencesKey("scrobble_service")
         val KEY_SCROBBLE_USER = stringPreferencesKey("scrobble_user")
         val KEY_SHOW_SCROBBLES = booleanPreferencesKey("show_scrobbles")
@@ -131,6 +134,7 @@ class SettingsManager(private val context: Context) {
             preferSyncedLyrics = prefs[KEY_PREFER_SYNCED_LYRICS] ?: true,
             lyricsSourceChip = prefs[KEY_LYRICS_SOURCE_CHIP] ?: true,
             queueShowPlayed = prefs[KEY_QUEUE_SHOW_PLAYED] ?: false,
+            shuffleAll = prefs[KEY_SHUFFLE_ALL] ?: false,
             scrobbleService = ScrobbleService.entries.firstOrNull { it.name == prefs[KEY_SCROBBLE_SERVICE] }
                 ?: ScrobbleService.LASTFM,
             scrobbleUser = prefs[KEY_SCROBBLE_USER] ?: "",
@@ -229,6 +233,10 @@ class SettingsManager(private val context: Context) {
 
     suspend fun setQueueShowPlayed(enabled: Boolean) {
         context.dataStore.edit { it[KEY_QUEUE_SHOW_PLAYED] = enabled }
+    }
+
+    suspend fun setShuffleAll(enabled: Boolean) {
+        context.dataStore.edit { it[KEY_SHUFFLE_ALL] = enabled }
     }
 
     suspend fun setLyricsSourceOrder(order: List<LyricsSource>) {
