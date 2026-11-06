@@ -11,9 +11,9 @@ import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Metadata
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.exoplayer.MetadataRetriever
+import androidx.media3.inspector.MetadataRetriever
 import androidx.media3.extractor.metadata.flac.PictureFrame
-import androidx.media3.extractor.metadata.flac.VorbisComment
+import androidx.media3.extractor.metadata.vorbis.VorbisComment
 import androidx.media3.extractor.metadata.id3.ApicFrame
 import androidx.media3.extractor.metadata.id3.CommentFrame
 import androidx.media3.extractor.metadata.id3.Id3Frame
@@ -172,7 +172,8 @@ suspend fun readSongInfo(context: Context, track: Track): SongInfo = withContext
     if (track.mimeType.isNotBlank()) file += "Type" to track.mimeType
 
     val format: Format? = try {
-        MetadataRetriever.retrieveMetadata(context, MediaItem.fromUri(uri)).get(10, TimeUnit.SECONDS)
+        MetadataRetriever.Builder(context, MediaItem.fromUri(uri)).build()
+            .use { it.retrieveTrackGroups().get(10, TimeUnit.SECONDS) }
             .let { groups -> (0 until groups.length).map { groups[it].getFormat(0) } }
             .firstOrNull { it.sampleMimeType?.startsWith("audio/") == true }
     } catch (_: Exception) {

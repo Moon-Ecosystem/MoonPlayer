@@ -76,7 +76,7 @@ By default a `.lrc` file comes first, then LRCLIB, then lyrics stored in the son
 
 ## Building from source
 
-You need JDK 17 or newer and an Android SDK with platform 36.1. The Gradle wrapper (Gradle 9.3.1) is included.
+You need JDK 17 or newer and an Android SDK with platform 37. The Gradle wrapper (Gradle 9.9.0) is included.
 
 ```sh
 git clone https://github.com/Moon-Ecosystem/MoonPlayer.git

@@ -8,7 +8,8 @@ plugins {
 
 android {
   namespace = "com.example"
-  compileSdk { version = release(36) { minorApiLevel = 1 } }
+  // 37: core-ktx 1.19 and Compose UI 1.12 need it to compile. targetSdk stays 36, so runtime behaviour doesn't change.
+  compileSdk { version = release(37) }
 
   defaultConfig {
     applicationId = "com.aistudio.moonplayer.mzrvqk"
@@ -118,6 +119,8 @@ dependencies {
   implementation(libs.reorderable)
   implementation(libs.androidx.media3.exoplayer)
   implementation(libs.androidx.media3.session)
+  // MetadataRetriever (song info, lyrics in tags) moved here from exoplayer in Media3 1.8.
+  implementation(libs.androidx.media3.inspector)
   // implementation(libs.androidx.media3.ui)
   implementation(libs.androidx.palette)
   // implementation(libs.converter.moshi)
