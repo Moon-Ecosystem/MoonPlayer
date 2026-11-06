@@ -334,7 +334,7 @@ class LyricsRepository(private val context: Context, private val dao: LyricsDao)
                 connection.connectTimeout = 10_000
                 connection.readTimeout = 10_000
                 // LRCLIB asks clients to identify themselves.
-                connection.setRequestProperty("User-Agent", "MoonPlayer (https://github.com/Varun-666/MoonPlayer)")
+                connection.setRequestProperty("User-Agent", "MoonPlayer (https://github.com/Moon-Ecosystem/MoonPlayer)")
                 when (val code = connection.responseCode) {
                     HttpURLConnection.HTTP_OK -> return connection.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
                     HttpURLConnection.HTTP_NOT_FOUND -> return null
