@@ -7,7 +7,7 @@ import android.util.Log
 import androidx.annotation.OptIn
 import androidx.media3.common.MediaItem
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.exoplayer.MetadataRetriever
+import androidx.media3.inspector.MetadataRetriever
 import java.util.concurrent.TimeUnit
 import com.example.data.db.LyricsDao
 import com.example.data.db.LyricsEntity
@@ -233,7 +233,8 @@ class LyricsRepository(private val context: Context, private val dao: LyricsDao)
     // shortcut: WAV isn't covered; Media3 skips its "id3 " chunk. Read that chunk with readId3Lyrics if WAVs with lyrics turn up.
     @OptIn(UnstableApi::class)
     private fun readTagLyrics(uri: Uri): List<EmbeddedLyrics> {
-        val groups = MetadataRetriever.retrieveMetadata(context, MediaItem.fromUri(uri)).get(10, TimeUnit.SECONDS)
+        val groups = MetadataRetriever.Builder(context, MediaItem.fromUri(uri)).build()
+            .use { it.retrieveTrackGroups().get(10, TimeUnit.SECONDS) }
         val entries = (0 until groups.length).flatMap { g ->
             val metadata = groups[g].getFormat(0).metadata ?: return@flatMap emptyList()
             (0 until metadata.length()).map { metadata[it] }
@@ -333,7 +334,7 @@ class LyricsRepository(private val context: Context, private val dao: LyricsDao)
                 connection.connectTimeout = 10_000
                 connection.readTimeout = 10_000
                 // LRCLIB asks clients to identify themselves.
-                connection.setRequestProperty("User-Agent", "MoonPlayer (https://github.com/Varun-666/MoonPlayer)")
+                connection.setRequestProperty("User-Agent", "MoonPlayer (https://github.com/Moon-Ecosystem/MoonPlayer)")
                 when (val code = connection.responseCode) {
                     HttpURLConnection.HTTP_OK -> return connection.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
                     HttpURLConnection.HTTP_NOT_FOUND -> return null

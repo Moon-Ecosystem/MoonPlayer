@@ -3,7 +3,7 @@ package com.example.data.lyrics
 import androidx.annotation.OptIn
 import androidx.media3.common.Metadata
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.extractor.metadata.flac.VorbisComment
+import androidx.media3.extractor.metadata.vorbis.VorbisComment
 import androidx.media3.extractor.metadata.id3.TextInformationFrame
 
 // LYRICS, UNSYNCEDLYRICS, SYNCEDLYRICS, "UNSYNCED LYRICS", LYRICS-ROMAJI…; never LYRICIST.
