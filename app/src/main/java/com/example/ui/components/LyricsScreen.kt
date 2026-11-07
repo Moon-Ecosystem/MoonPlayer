@@ -15,6 +15,12 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material3.Icon
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -229,15 +235,34 @@ private fun SyncedLyrics(
     // Changes only when the sung line changes, not on every position tick.
     val current by remember(lines) { derivedStateOf { currentLineIndex(lines, position.value) } }
     val listState = rememberLazyListState()
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    // Keep the sung line a third of the way down the square.
+    suspend fun showSungLine() =
+        listState.animateScrollToItem(current.coerceAtLeast(0), scrollOffset = -listState.layoutInfo.viewportSize.height / 3)
 
     LaunchedEffect(current) {
         // After the user scrolls, leave the list where they put it for a few seconds.
         if (SystemClock.uptimeMillis() - guard.lastUserScroll < 3_000) return@LaunchedEffect
-        // Keep the sung line a third of the way down the square.
-        val third = listState.layoutInfo.viewportSize.height / 3
-        listState.animateScrollToItem(current.coerceAtLeast(0), scrollOffset = -third)
+        showSungLine()
     }
 
+    // Where the sung line is when it's scrolled out of view: -1 above, 1 below, 0 on screen.
+    val away by remember(listState) {
+        derivedStateOf {
+            val visible = listState.layoutInfo.visibleItemsInfo
+            when {
+                current < 0 || visible.isEmpty() -> 0
+                current < visible.first().index -> -1
+                current > visible.last().index -> 1
+                else -> 0
+            }
+        }
+    }
+    // Kept while the arrow fades out, so it doesn't flip direction as it goes.
+    var arrowUp by remember { mutableStateOf(true) }
+    LaunchedEffect(away) { if (away != 0) arrowUp = away < 0 }
+
+    Box(modifier = Modifier.fillMaxSize()) {
     LazyColumn(
         state = listState,
         // [top] leaves room for the version pills when they show.
@@ -274,6 +299,30 @@ private fun SyncedLyrics(
             )
         }
         item { footer() }
+    }
+    // Back to the sung line; bottom-right, clear of the source line at bottom-left.
+    AnimatedVisibility(
+        visible = away != 0,
+        enter = fadeIn(),
+        exit = fadeOut(),
+        modifier = Modifier.align(Alignment.BottomEnd).padding(end = 12.dp, bottom = 10.dp)
+    ) {
+        Surface(
+            onClick = {
+                guard.lastUserScroll = 0L // follow the song again straight away
+                scope.launch { showSungLine() }
+            },
+            shape = CircleShape,
+            color = Color.Black.copy(alpha = 0.45f)
+        ) {
+            Icon(
+                imageVector = if (arrowUp) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                contentDescription = "Back to the current line",
+                tint = PrimaryText.copy(alpha = 0.85f),
+                modifier = Modifier.padding(6.dp).size(22.dp)
+            )
+        }
+    }
     }
 }
 
