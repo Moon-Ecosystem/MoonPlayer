@@ -427,6 +427,48 @@ fun SettingsScreen(
                 }
             }
         }
+
+        Spacer(modifier = Modifier.height(20.dp))
+        SettingsSectionHeader(title = "ARTISTS")
+        Spacer(modifier = Modifier.height(8.dp))
+        SettingsToggleRow(
+            title = "Split Artists on Commas",
+            subtitle = "\"A, B\" counts as two artists",
+            checked = settings.splitArtistCommas,
+            onCheckedChange = { viewModel.setSplitArtistCommas(it) },
+            accentColor = accent
+        )
+        if (settings.artistSplits.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(4.dp))
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = TerminalRaisedPanel,
+                border = androidx.compose.foundation.BorderStroke(1.dp, TerminalBorder),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(start = 14.dp, top = 6.dp, bottom = 6.dp)) {
+                    Text("Your name fixes", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = PrimaryText, modifier = Modifier.padding(top = 6.dp))
+                    settings.artistSplits.toSortedMap(String.CASE_INSENSITIVE_ORDER).forEach { (tag, splits) ->
+                        val count = splits.count { it } + 1
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(tag, style = MaterialTheme.typography.bodySmall, color = PrimaryText, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                                Text("→ $count ${if (count == 1) "ARTIST" else "ARTISTS"}", style = MaterialTheme.typography.labelSmall, fontFamily = FontFamily.Monospace, color = MutedText)
+                            }
+                            IconButton(onClick = { viewModel.setArtistSplit(tag, null) }) {
+                                Icon(Icons.Default.Close, contentDescription = "Remove the fix for $tag", tint = MutedText, modifier = Modifier.size(18.dp))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = "Earth, Wind & Fire and other well-known names stay whole. Fix any name from its artist page: ⋮ › How this name splits.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MutedText
+        )
         }
 
         // The Last.fm / Libre.fm account read on the stats page

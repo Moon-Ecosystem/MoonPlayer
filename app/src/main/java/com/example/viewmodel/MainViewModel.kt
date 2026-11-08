@@ -294,9 +294,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         repository.historySince(range.since(System.currentTimeMillis())).map { range to it }
     }.shareIn(viewModelScope, SharingStarted.WhileSubscribed(5000), replay = 1)
 
+    // How artist tags split (Settings › Library and artist pages); from settingsFlow, as `settings` comes later.
+    private val artistRules = settingsManager.settingsFlow.map { it.artistRules }.distinctUntilChanged()
+
     /** The stats page for the chosen range. Null while loading. */
-    val listeningStats: StateFlow<ListeningStats?> = statsRows
-        .map { (range, rows) -> listeningStats(rows, range, System.currentTimeMillis()) }
+    val listeningStats: StateFlow<ListeningStats?> = combine(statsRows, artistRules) { (range, rows), rules ->
+        listeningStats(rows, range, System.currentTimeMillis(), artists = rules)
+    }
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
@@ -312,8 +316,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** The open detail page's stats, in the same range; null when none is open. */
-    val statsDetail: StateFlow<StatsDetail?> = combine(statsRows, _statsSelection) { (range, rows), selected ->
-        selected?.let { (kind, key) -> detailStats(rows, kind, key, range, System.currentTimeMillis()) }
+    val statsDetail: StateFlow<StatsDetail?> = combine(statsRows, _statsSelection, artistRules) { (range, rows), selected, rules ->
+        selected?.let { (kind, key) -> detailStats(rows, kind, key, range, System.currentTimeMillis(), artists = rules) }
     }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     // SCROBBLE STATS: what Pano Scrobbler sent to Last.fm / Libre.fm, read back from there.
@@ -624,6 +628,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setShuffleAll(enabled: Boolean) {
         viewModelScope.launch { settingsManager.setShuffleAll(enabled) }
+    }
+
+    fun setSplitArtistCommas(enabled: Boolean) {
+        viewModelScope.launch { settingsManager.setSplitArtistCommas(enabled) }
+    }
+
+    /** The user's splits for one artist tag; null (or the same as automatic) forgets them. */
+    fun setArtistSplit(tag: String, splits: List<Boolean>?) {
+        val key = tag.trim()
+        val auto = com.example.data.model.autoSplits(com.example.data.model.artistTag(key), settings.value.splitArtistCommas)
+        viewModelScope.launch { settingsManager.setArtistSplit(key, splits?.takeIf { it != auto }) }
     }
 
     /** The romaji preference in effect: the user's setting, else the phone's language. */

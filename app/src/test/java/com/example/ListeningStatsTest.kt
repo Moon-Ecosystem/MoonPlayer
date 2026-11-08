@@ -1,6 +1,8 @@
 package com.example
 
 import com.example.data.db.HistoryEntity
+import com.example.data.model.ArtistSplitRules
+import com.example.data.model.artistTag
 import com.example.data.model.splitArtists
 import com.example.data.stats.StatsKind
 import com.example.data.stats.StatsRange
@@ -125,6 +127,49 @@ class ListeningStatsTest {
         assertEquals(listOf("AC/DC", "Foo"), splitArtists("AC/DC/Foo"))
         assertEquals(listOf("Simon & Garfunkel"), splitArtists("Simon & Garfunkel"))
         assertEquals(listOf("Unknown Artist"), splitArtists("Unknown Artist"))
+        // Commas split names...
+        assertEquals(listOf("A.R. Rahman", "Lata Mangeshkar"), splitArtists("A.R. Rahman, Lata Mangeshkar"))
+        assertEquals(listOf("米津玄師", "菅田将暉"), splitArtists("米津玄師、菅田将暉"))
+        assertEquals(listOf("Kendrick Lamar", "The Weeknd"), splitArtists("Kendrick Lamar, The Weeknd"))
+        assertEquals(listOf("Lata Mangeshkar", "Kishore Kumar & Asha Bhosle"), splitArtists("Lata Mangeshkar, Kishore Kumar & Asha Bhosle"))
+        // ...except in bands named as a list, and well-known names, also beside other artists.
+        assertEquals(listOf("Earth, Wind & Fire"), splitArtists("Earth, Wind & Fire"))
+        assertEquals(listOf("Crosby, Stills, Nash & Young"), splitArtists("Crosby, Stills, Nash & Young"))
+        assertEquals(listOf("Peter, Paul and Mary"), splitArtists("Peter, Paul and Mary"))
+        assertEquals(listOf("Tyler, The Creator"), splitArtists("Tyler, The Creator"))
+        assertEquals(listOf("Tyler, The Creator", "Kali Uchis"), splitArtists("Tyler, The Creator, Kali Uchis"))
+        assertEquals(listOf("Earth, Wind & Fire", "The Emotions"), splitArtists("Earth, Wind & Fire, The Emotions"))
+        assertEquals(listOf("A", "Earth, Wind & Fire"), splitArtists("A/Earth, Wind & Fire"))
+        assertEquals(listOf("Kendrick Lamar feat. SZA"), splitArtists("Kendrick Lamar feat. SZA"))
+        // "|" splits, and a credit's role label is dropped.
+        assertEquals(
+            listOf("Rahat Fateh Ali Khan", "Shreya Ghoshal", "Shadab Faridi"),
+            splitArtists("Rahat Fateh Ali Khan | Shreya Ghoshal | Back Up Vocal : Shadab Faridi")
+        )
+        assertEquals(listOf("A", "B"), splitArtists("A ｜ B"))
+        assertEquals(listOf("A.R. Rahman"), splitArtists("Music: A.R. Rahman"))
+        assertEquals(listOf("Re:Zero Cast"), splitArtists("Re:Zero Cast"))
+    }
+
+    @Test
+    fun `the user's own splits and the commas switch`() {
+        val tag = "Rahman, Lata & Asha"
+        val cut = artistTag(tag)
+        assertEquals(listOf("Rahman", "Lata", "Asha"), cut.names)
+        assertEquals(listOf(",", "&"), cut.separators)
+        // Automatic: a band-style list, kept whole.
+        assertEquals(listOf(tag), splitArtists(tag))
+        // Split at both, or only at the comma.
+        assertEquals(listOf("Rahman", "Lata", "Asha"), splitArtists(tag, ArtistSplitRules(fixes = mapOf(tag to listOf(true, true)))))
+        assertEquals(listOf("Rahman", "Lata & Asha"), splitArtists(tag, ArtistSplitRules(fixes = mapOf(tag to listOf(true, false)))))
+        // A fix is for that exact tag only; a stale one (wrong length) is ignored.
+        assertEquals(listOf("Kendrick Lamar", "SZA"), splitArtists("Kendrick Lamar feat. SZA", ArtistSplitRules(fixes = mapOf("Kendrick Lamar feat. SZA" to listOf(true)))))
+        assertEquals(listOf(tag), splitArtists(tag, ArtistSplitRules(fixes = mapOf(tag to listOf(true)))))
+        // Commas off: back to "/" and ";" only, but a fix still wins.
+        val off = ArtistSplitRules(commas = false)
+        assertEquals(listOf("A.R. Rahman, Lata Mangeshkar"), splitArtists("A.R. Rahman, Lata Mangeshkar", off))
+        assertEquals(listOf("A", "B, C"), splitArtists("A/B, C", off))
+        assertEquals(listOf("B", "C"), splitArtists("B, C", off.copy(fixes = mapOf("B, C" to listOf(true)))))
     }
 
     @Test

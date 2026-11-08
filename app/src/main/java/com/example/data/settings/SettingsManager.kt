@@ -1,6 +1,7 @@
 package com.example.data.settings
 
 import android.content.Context
+import com.example.data.model.ArtistSplitRules
 import com.example.data.scrobble.ScrobbleService
 import com.example.data.lyrics.DEFAULT_LYRICS_SOURCE_ORDER
 import com.example.data.lyrics.LyricsSource
@@ -68,8 +69,22 @@ data class PlayerSettings(
     val scrobbleService: ScrobbleService = ScrobbleService.LASTFM,
     val scrobbleUser: String = "",
     // Off hides the scrobble side of Listening stats (and its switch) altogether.
-    val showScrobbles: Boolean = true
-)
+    val showScrobbles: Boolean = true,
+    // "A, B" counts as two artists; the user's per-tag choices from an artist page win over it.
+    val splitArtistCommas: Boolean = true,
+    val artistSplits: Map<String, List<Boolean>> = emptyMap()
+) {
+    val artistRules: ArtistSplitRules get() = ArtistSplitRules(splitArtistCommas, artistSplits)
+}
+
+// One saved artist fix: the tag, this mark, then 1 (split) or 0 (joined) per separator.
+private const val FIX_MARK = '\u001F'
+
+private fun parseArtistSplits(entries: Set<String>?): Map<String, List<Boolean>> =
+    entries.orEmpty().mapNotNull { entry ->
+        val at = entry.lastIndexOf(FIX_MARK).takeIf { it > 0 } ?: return@mapNotNull null
+        entry.substring(0, at) to entry.substring(at + 1).map { it == '1' }
+    }.toMap()
 
 class SettingsManager(private val context: Context) {
     companion object {
@@ -100,6 +115,8 @@ class SettingsManager(private val context: Context) {
         val KEY_SCROBBLE_SERVICE = stringPreferencesKey("scrobble_service")
         val KEY_SCROBBLE_USER = stringPreferencesKey("scrobble_user")
         val KEY_SHOW_SCROBBLES = booleanPreferencesKey("show_scrobbles")
+        val KEY_SPLIT_ARTIST_COMMAS = booleanPreferencesKey("split_artist_commas")
+        val KEY_ARTIST_SPLITS = stringSetPreferencesKey("artist_splits")
     }
 
     val settingsFlow: Flow<PlayerSettings> = context.dataStore.data.map { prefs ->
@@ -138,8 +155,23 @@ class SettingsManager(private val context: Context) {
             scrobbleService = ScrobbleService.entries.firstOrNull { it.name == prefs[KEY_SCROBBLE_SERVICE] }
                 ?: ScrobbleService.LASTFM,
             scrobbleUser = prefs[KEY_SCROBBLE_USER] ?: "",
-            showScrobbles = prefs[KEY_SHOW_SCROBBLES] ?: true
+            showScrobbles = prefs[KEY_SHOW_SCROBBLES] ?: true,
+            splitArtistCommas = prefs[KEY_SPLIT_ARTIST_COMMAS] ?: true,
+            artistSplits = parseArtistSplits(prefs[KEY_ARTIST_SPLITS])
         )
+    }
+
+    suspend fun setSplitArtistCommas(enabled: Boolean) {
+        context.dataStore.edit { it[KEY_SPLIT_ARTIST_COMMAS] = enabled }
+    }
+
+    /** Saves the user's splits for [tag] (one per separator), or forgets them with null. */
+    suspend fun setArtistSplit(tag: String, splits: List<Boolean>?) {
+        context.dataStore.edit { prefs ->
+            val others = prefs[KEY_ARTIST_SPLITS].orEmpty().filterNot { it.substringBeforeLast(FIX_MARK) == tag }
+            prefs[KEY_ARTIST_SPLITS] = others.toSet() +
+                listOfNotNull(splits?.let { s -> tag + FIX_MARK + s.joinToString("") { if (it) "1" else "0" } })
+        }
     }
 
     suspend fun setAccentMode(mode: AccentMode) {

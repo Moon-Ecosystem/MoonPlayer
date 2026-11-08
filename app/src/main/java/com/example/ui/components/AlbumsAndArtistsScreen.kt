@@ -83,12 +83,13 @@ fun GroupedTracksScreen(
 
     var selectedGroup by remember { mutableStateOf<String?>(null) }
 
-    val groups = remember(allTracks, mode) {
+    val artistRules = viewModel.settings.collectAsState().value.artistRules
+    val groups = remember(allTracks, mode, artistRules) {
         when (mode) {
             GroupMode.ALBUMS -> allTracks.groupBy { it.album }
             // A song with several artists is listed under each of them.
             GroupMode.ARTISTS -> allTracks
-                .flatMap { track -> splitArtists(track.artist).map { it to track } }
+                .flatMap { track -> splitArtists(track.artist, artistRules).map { it to track } }
                 .groupBy({ it.first }, { it.second })
         }
     }
