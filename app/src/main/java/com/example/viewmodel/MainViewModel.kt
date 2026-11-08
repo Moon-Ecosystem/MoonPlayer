@@ -52,6 +52,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.shareIn
@@ -1277,28 +1278,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** The song info sheet: the file's own details, then its plays in Moon Player. */
-    suspend fun songInfo(track: Track): SongInfo {
-        val read = readSongInfo(getApplication(), track)
+    suspend fun songInfo(track: Track): SongInfo = kotlinx.coroutines.coroutineScope {
         val s = settingsManager.settingsFlow.first()
-        // A missing file has no lyrics to read; only list them for files that are there.
-        val info = if (read.missing) read else read.copy(
-            sections = read.sections + InfoSection(
-                "LYRICS",
-                lyricsRepository.describe(
-                    track,
-                    onlineLyrics = s.onlineLyrics.takeIf { s.lrclibEnabled },
-                    lrclibEnabled = s.lrclibEnabled,
-                    preferRomaji = effectivePreferRomaji(s),
-                    order = s.lyricsSourceOrder,
-                    preferSynced = s.preferSyncedLyrics
-                )
+        // The file, its lyrics and the play history are read at the same time: none needs the others.
+        val fileInfo = async { readSongInfo(getApplication(), track) }
+        val lyrics = async {
+            lyricsRepository.describe(
+                track,
+                onlineLyrics = s.onlineLyrics.takeIf { s.lrclibEnabled },
+                lrclibEnabled = s.lrclibEnabled,
+                preferRomaji = effectivePreferRomaji(s),
+                order = s.lyricsSourceOrder,
+                preferSynced = s.preferSyncedLyrics
             )
-        )
-        val history = repository.historySince(0L).first()
+        }
+        val historyRows = async { repository.historySince(0L).first() }
+        val read = fileInfo.await()
+        // A missing file has no lyrics to read; only list them for files that are there.
+        val info = if (read.missing) read else read.copy(sections = read.sections + InfoSection("LYRICS", lyrics.await()))
+        val history = historyRows.await()
         val played = detailStats(history, StatsKind.TRACK, track.id, StatsRange.ALL, System.currentTimeMillis())
-        val stats = played.stats.tracks.firstOrNull() ?: return info
+        val stats = played.stats.tracks.firstOrNull() ?: return@coroutineScope info
         val minutes = stats.listenedMs / 60_000
-        return info.copy(sections = info.sections + InfoSection(
+        info.copy(sections = info.sections + InfoSection(
             "IN MOON PLAYER",
             listOfNotNull(
                 "Plays" to "${stats.plays} · ${if (minutes >= 60) "${minutes / 60}h ${minutes % 60}m" else "${minutes}m"} listened",
