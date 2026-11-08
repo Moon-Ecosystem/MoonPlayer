@@ -34,6 +34,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.clickable
@@ -73,6 +74,14 @@ fun rememberCopy(): (String) -> Unit {
     }
 }
 
+/**
+ * Keeps a fling's leftover speed at the list's ends from reaching the sheet, which would move
+ * and spring back. Dragging still reaches it, so the sheet can be pulled down to close.
+ */
+private object KeepLeftoverFling : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
+    override suspend fun onPostFling(consumed: androidx.compose.ui.unit.Velocity, available: androidx.compose.ui.unit.Velocity) = available
+}
+
 /** Everything known about [track]'s file, from the format badge or the player menu. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -90,7 +99,7 @@ fun SongInfoSheet(viewModel: MainViewModel, track: Track, badge: String, onDismi
         modifier = Modifier.statusBarsPadding().testTag("song_info_sheet")
     ) {
         LazyColumn(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).nestedScroll(KeepLeftoverFling),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             item {
