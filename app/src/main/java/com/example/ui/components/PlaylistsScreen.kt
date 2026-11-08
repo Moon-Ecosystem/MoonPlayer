@@ -670,6 +670,13 @@ fun CollectionScreen(
         else -> null
     }
     var showStats by remember { mutableStateOf(false) }
+    // An artist page's tags that name several people; kept while the sheet is open, as splitting
+    // one can take this artist's songs away from the page.
+    val splitTags = remember(givenTracks, kind) {
+        if (kind == CollectionKind.ARTIST) splittableTags(givenTracks.map { it.artist }) else emptyList()
+    }
+    var sheetTags by remember { mutableStateOf<List<String>?>(null) }
+    sheetTags?.let { ArtistSplitSheet(viewModel, name, it, onDismiss = { sheetTags = null }) }
     if (showStats) {
         BackHandler { showStats = false }
         StatsDetailScreen(viewModel, onBack = { showStats = false })
@@ -717,6 +724,10 @@ fun CollectionScreen(
             if (statsKind != null) DropdownMenuItem(
                 text = { Text("Listening stats", color = PrimaryText) },
                 onClick = { close(); viewModel.openStatsDetail(statsKind, name); showStats = true }
+            )
+            if (splitTags.isNotEmpty()) DropdownMenuItem(
+                text = { Text("How this name splits…", color = PrimaryText) },
+                onClick = { close(); sheetTags = splitTags }
             )
         }
         Box(Modifier.padding(bottom = 8.dp)) {

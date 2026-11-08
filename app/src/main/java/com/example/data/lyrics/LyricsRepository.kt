@@ -82,14 +82,31 @@ class LyricsRepository(private val context: Context, private val dao: LyricsDao)
         preferSynced: Boolean = true,
         forceLrclib: Boolean = false
     ): LyricsLookup = withContext(Dispatchers.IO) {
+        find(track, readLocal(track), online, preferRomaji, order, preferSynced, forceLrclib)
+    }
+
+    /** The song's own lyrics: its .lrc and the tags in its file, read once per lookup. */
+    private class Local(val lrc: Lyrics?, val embedded: List<Pair<LyricsKind, Lyrics>>)
+
+    private fun readLocal(track: Track) = Local(readSiblingLrc(track)?.let(::lyricsFromText), embeddedVersions(track))
+
+    private suspend fun find(
+        track: Track,
+        local: Local,
+        online: Boolean,
+        preferRomaji: Boolean,
+        order: List<LyricsSource>,
+        preferSynced: Boolean,
+        forceLrclib: Boolean
+    ): LyricsLookup = withContext(Dispatchers.IO) {
         // kind -> source -> lyrics
         val byKind = sortedMapOf<LyricsKind, MutableMap<LyricsSource, Lyrics>>()
         fun add(kind: LyricsKind, source: LyricsSource, lyrics: Lyrics) { byKind.getOrPut(kind) { mutableMapOf() }[source] = lyrics }
 
-        readSiblingLrc(track)?.let(::lyricsFromText)?.let { lrc ->
+        local.lrc?.let { lrc ->
             add(lyricsKinds(listOf(plainText(lrc)), track.title).first(), LyricsSource.LRC_FILE, lrc)
         }
-        embeddedVersions(track).forEach { (kind, lyrics) -> add(kind, LyricsSource.EMBEDDED, lyrics) }
+        local.embedded.forEach { (kind, lyrics) -> add(kind, LyricsSource.EMBEDDED, lyrics) }
 
         val row = dao.get(track.id)
         var unavailable: LyricsLookup.Unavailable? = null
@@ -159,10 +176,11 @@ class LyricsRepository(private val context: Context, private val dao: LyricsDao)
         preferSynced: Boolean
     ): List<Pair<String, String>> = withContext(Dispatchers.IO) {
         fun sync(l: Lyrics) = if (l is Lyrics.Synced) "synced" else "not synced"
-        val lookup = find(track, online = false, preferRomaji, order, preferSynced) as? LyricsLookup.Found
-
-        val lrc = readSiblingLrc(track)?.let(::lyricsFromText)
-        val embedded = embeddedVersions(track)
+        // The same reads the lookup uses, so the file isn't opened twice.
+        val local = readLocal(track)
+        val lookup = find(track, local, online = false, preferRomaji, order, preferSynced, forceLrclib = false) as? LyricsLookup.Found
+        val lrc = local.lrc
+        val embedded = local.embedded
         val saved = dao.get(track.id)?.takeIf { it.source == LyricsSource.LRCLIB.name }
         listOf(
             ".lrc file" to (lrc?.let { "Yes, ${sync(it)}" } ?: "None"),

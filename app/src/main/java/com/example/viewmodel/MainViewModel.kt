@@ -52,6 +52,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.shareIn
@@ -294,9 +295,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         repository.historySince(range.since(System.currentTimeMillis())).map { range to it }
     }.shareIn(viewModelScope, SharingStarted.WhileSubscribed(5000), replay = 1)
 
+    // How artist tags split (Settings › Library and artist pages); from settingsFlow, as `settings` comes later.
+    private val artistRules = settingsManager.settingsFlow.map { it.artistRules }.distinctUntilChanged()
+
     /** The stats page for the chosen range. Null while loading. */
-    val listeningStats: StateFlow<ListeningStats?> = statsRows
-        .map { (range, rows) -> listeningStats(rows, range, System.currentTimeMillis()) }
+    val listeningStats: StateFlow<ListeningStats?> = combine(statsRows, artistRules) { (range, rows), rules ->
+        listeningStats(rows, range, System.currentTimeMillis(), artists = rules)
+    }
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
@@ -312,8 +317,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** The open detail page's stats, in the same range; null when none is open. */
-    val statsDetail: StateFlow<StatsDetail?> = combine(statsRows, _statsSelection) { (range, rows), selected ->
-        selected?.let { (kind, key) -> detailStats(rows, kind, key, range, System.currentTimeMillis()) }
+    val statsDetail: StateFlow<StatsDetail?> = combine(statsRows, _statsSelection, artistRules) { (range, rows), selected, rules ->
+        selected?.let { (kind, key) -> detailStats(rows, kind, key, range, System.currentTimeMillis(), artists = rules) }
     }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     // SCROBBLE STATS: what Pano Scrobbler sent to Last.fm / Libre.fm, read back from there.
@@ -624,6 +629,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setShuffleAll(enabled: Boolean) {
         viewModelScope.launch { settingsManager.setShuffleAll(enabled) }
+    }
+
+    fun setSplitArtistCommas(enabled: Boolean) {
+        viewModelScope.launch { settingsManager.setSplitArtistCommas(enabled) }
+    }
+
+    /** The user's splits for one artist tag; null (or the same as automatic) forgets them. */
+    fun setArtistSplit(tag: String, splits: List<Boolean>?) {
+        val key = tag.trim()
+        val auto = com.example.data.model.autoSplits(com.example.data.model.artistTag(key), settings.value.splitArtistCommas)
+        viewModelScope.launch { settingsManager.setArtistSplit(key, splits?.takeIf { it != auto }) }
     }
 
     /** The romaji preference in effect: the user's setting, else the phone's language. */
@@ -1262,28 +1278,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** The song info sheet: the file's own details, then its plays in Moon Player. */
-    suspend fun songInfo(track: Track): SongInfo {
-        val read = readSongInfo(getApplication(), track)
+    suspend fun songInfo(track: Track): SongInfo = kotlinx.coroutines.coroutineScope {
         val s = settingsManager.settingsFlow.first()
-        // A missing file has no lyrics to read; only list them for files that are there.
-        val info = if (read.missing) read else read.copy(
-            sections = read.sections + InfoSection(
-                "LYRICS",
-                lyricsRepository.describe(
-                    track,
-                    onlineLyrics = s.onlineLyrics.takeIf { s.lrclibEnabled },
-                    lrclibEnabled = s.lrclibEnabled,
-                    preferRomaji = effectivePreferRomaji(s),
-                    order = s.lyricsSourceOrder,
-                    preferSynced = s.preferSyncedLyrics
-                )
+        // The file, its lyrics and the play history are read at the same time: none needs the others.
+        val fileInfo = async { readSongInfo(getApplication(), track) }
+        val lyrics = async {
+            lyricsRepository.describe(
+                track,
+                onlineLyrics = s.onlineLyrics.takeIf { s.lrclibEnabled },
+                lrclibEnabled = s.lrclibEnabled,
+                preferRomaji = effectivePreferRomaji(s),
+                order = s.lyricsSourceOrder,
+                preferSynced = s.preferSyncedLyrics
             )
-        )
-        val history = repository.historySince(0L).first()
+        }
+        val historyRows = async { repository.historySince(0L).first() }
+        val read = fileInfo.await()
+        // A missing file has no lyrics to read; only list them for files that are there.
+        val info = if (read.missing) read else read.copy(sections = read.sections + InfoSection("LYRICS", lyrics.await()))
+        val history = historyRows.await()
         val played = detailStats(history, StatsKind.TRACK, track.id, StatsRange.ALL, System.currentTimeMillis())
-        val stats = played.stats.tracks.firstOrNull() ?: return info
+        val stats = played.stats.tracks.firstOrNull() ?: return@coroutineScope info
         val minutes = stats.listenedMs / 60_000
-        return info.copy(sections = info.sections + InfoSection(
+        info.copy(sections = info.sections + InfoSection(
             "IN MOON PLAYER",
             listOfNotNull(
                 "Plays" to "${stats.plays} · ${if (minutes >= 60) "${minutes / 60}h ${minutes % 60}m" else "${minutes}m"} listened",

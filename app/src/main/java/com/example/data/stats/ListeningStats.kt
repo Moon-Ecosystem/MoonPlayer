@@ -1,6 +1,7 @@
 package com.example.data.stats
 
 import com.example.data.db.HistoryEntity
+import com.example.data.model.ArtistSplitRules
 import com.example.data.model.splitArtists
 import java.util.Calendar
 import java.util.TimeZone
@@ -56,11 +57,12 @@ fun detailStats(
     key: String,
     range: StatsRange,
     now: Long,
-    zone: TimeZone = TimeZone.getDefault()
+    zone: TimeZone = TimeZone.getDefault(),
+    artists: ArtistSplitRules = ArtistSplitRules()
 ): StatsDetail {
     val mine = rows.filter {
         when (kind) {
-            StatsKind.ARTIST -> key in splitArtists(it.artist)
+            StatsKind.ARTIST -> key in splitArtists(it.artist, artists)
             StatsKind.ALBUM -> it.album == key
             StatsKind.TRACK -> it.trackId == key
             StatsKind.PLAYLIST -> it.playlist == key
@@ -72,7 +74,7 @@ fun detailStats(
     return StatsDetail(
         kind = kind,
         key = key,
-        stats = listeningStats(mine, range, now, zone, ongoing),
+        stats = listeningStats(mine, range, now, zone, ongoing, artists),
         allListenedMs = rows.sumOf { it.listenedMs.coerceAtLeast(0L) },
         firstPlayed = mine.minOfOrNull { it.playedAt },
         lastPlayed = mine.maxOfOrNull { it.playedAt },
@@ -126,7 +128,8 @@ fun listeningStats(
     range: StatsRange,
     now: Long,
     zone: TimeZone = TimeZone.getDefault(),
-    ongoing: HistoryEntity? = ongoingPlay(rows, now)
+    ongoing: HistoryEntity? = ongoingPlay(rows, now),
+    artists: ArtistSplitRules = ArtistSplitRules()
 ): ListeningStats {
     fun HistoryEntity.time() = listenedMs.coerceAtLeast(0L)
     fun HistoryEntity.counts() = this == ongoing || !stoppedEarly()
@@ -187,7 +190,7 @@ fun listeningStats(
     return ListeningStats(
         plays = rows.count { it.counts() },
         listenedMs = rows.sumOf { it.time() },
-        artists = rank({ splitArtists(it.artist) }) { "" },
+        artists = rank({ splitArtists(it.artist, artists) }) { "" },
         albums = rank({ listOf(it.album) }) { plays -> mostCommon(plays) { it.artist } },
         tracks = tracks,
         playlists = rank({ listOf(it.playlist) }) { "" },
